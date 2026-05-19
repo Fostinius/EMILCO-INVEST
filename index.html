@@ -1215,8 +1215,17 @@ function HuurApp() {
                               <div>
                                 {future ? <span style={{ fontSize:11, color:"#4a6080", fontStyle:"italic" }}>Toekomstig</span>
                                 : d.paid ? <div>
-                                    <span style={{ fontSize:11, background:diff<0?"#e67e2244":"#2d6a4f44", color:diff<0?"#e07a40":"#52b788", borderRadius:4, padding:"2px 6px" }}>{diff<0?"Deels betaald":"Betaald ✓"}</span>
-                                    {diff!==0&&<span style={{ fontSize:11, color:diff>0?"#9b72cf":"#e07a40", marginLeft:4 }}>{diff>0?"+":""}{fmtEur(diff)}</span>}
+                                    <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                                      <span style={{ fontSize:11, background:diff<0?"#e67e2244":"#2d6a4f44", color:diff<0?"#e07a40":"#52b788", borderRadius:4, padding:"2px 6px" }}>{diff<0?"Deels betaald":"Betaald ✓"}</span>
+                                      {diff!==0&&<span style={{ fontSize:11, color:diff>0?"#9b72cf":"#e07a40" }}>{diff>0?"+":""}{fmtEur(diff)}</span>}
+                                    </div>
+                                    {d.allPayments&&d.allPayments.map((p,pi)=>(
+                                      <div key={pi} style={{ display:"flex", gap:6, alignItems:"center", marginTop:2 }}>
+                                        {d.allPayments.length>1&&<span style={{ fontSize:11, color:"#52b788", fontWeight:600 }}>{fmtEur(p.amount)}</span>}
+                                        <span style={{ fontSize:11, color:"#4a90c8" }}>📅 {p.date}</span>
+                                        {p.note&&<span style={{ fontSize:10, color:"#4a6080", fontStyle:"italic" }}>— {p.note}</span>}
+                                      </div>
+                                    ))}
                                   </div>
                                 : <span style={{ fontSize:11, background:"#5c2d1a44", color:"#e07a40", borderRadius:4, padding:"2px 6px" }}>Niet betaald</span>}
                               </div>
