@@ -78,6 +78,21 @@ function saveDataLocal(key, value) {
 }
 
 const fmtEur  = n => "€ " + Number(n).toLocaleString("nl-BE", { minimumFractionDigits:2, maximumFractionDigits:2 });
+
+// Format any date string to DD/MM/YYYY
+const fmtDate = (str) => {
+  if (!str) return "";
+  // DD-MM-YYYY → already correct format, just replace - with /
+  if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) return str.replace(/-/g, "/");
+  // DD/MM/YYYY → already correct
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) return str;
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const [y,m,d] = str.slice(0,10).split("-");
+    return d+"/"+m+"/"+y;
+  }
+  return str;
+};
 const round2  = n => Math.round(n * 100) / 100;
 const totalDue = t => (t?.rent || 0) + (t?.voorschot || 0);
 
@@ -477,7 +492,7 @@ function HuurApp() {
                             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                               {tenant&&<div style={{ textAlign:"right" }}>
                                 <div style={{ fontSize:13, fontWeight:700, color:paid?"#52b788":"#e07a40" }}>{paid?fmtEur(payment.amount):fmtEur(due)}</div>
-                                <div style={{ fontSize:10, color:"#7a8fa6" }}>{paid?payment.date:"verwacht"}</div>
+                                <div style={{ fontSize:10, color:"#7a8fa6" }}>{paid?fmtDate(payment.date):"verwacht"}</div>
                               </div>}
                               <div style={{ width:22, height:22, borderRadius:"50%", background:paid?"#2d6a4f":tenant?"#5c3a1a":"#2a3a50", display:"flex", alignItems:"center", justifyContent:"center" }}>
                                 {paid?<Ic n="check" s={11}/>:tenant?<Ic n="x" s={11}/>:null}
@@ -570,7 +585,7 @@ function HuurApp() {
                                               <span style={{ color:"#c9a84c" }}>= {fmtEur((h.rent||0)+(h.voorschot||0))}</span>
                                             </div>
                                             <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-                                              <span style={{ color:"#7a8fa6" }}>{h.date}</span>
+                                              <span style={{ color:"#7a8fa6" }}>{fmtDate(h.date)}</span>
                                               <button onClick={()=>openHistoryModal(u.id,i)} style={{ background:"none", border:"none", cursor:"pointer", color:"#c9a84c", padding:"2px 4px", fontSize:12 }} title="Bewerken">✏️</button>
                                               {!isLatest&&<button onClick={()=>{ if(confirm("Wil je deze historiek-entry verwijderen?")) deleteHistory(u.id,i); }} style={{ background:"none", border:"none", cursor:"pointer", color:"#5a4a4a", padding:"2px 4px" }} title="Verwijderen"><Ic n="trash" s={12}/></button>}
                                             </div>
@@ -589,7 +604,7 @@ function HuurApp() {
                                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12 }}>
                                         <span style={{ color:"#7a8fa6" }}>{MONTHS_NL[p.month]} {p.year}</span>
                                         <span style={{ color:"#52b788", fontWeight:700 }}>{fmtEur(p.amount)}</span>
-                                        <span style={{ color:"#4a6080" }}>{p.date}</span>
+                                        <span style={{ color:"#4a6080" }}>{fmtDate(p.date)}</span>
                                         <button onClick={()=>deletePayment(p.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"#5a4a4a", padding:2 }}><Ic n="trash" s={13}/></button>
                                       </div>
                                       {p.voorschot>0&&<div style={{ display:"flex", gap:6, marginTop:3 }}><Pill label="Huur" value={fmtEur(p.rent)} color="#4a90c8"/><Pill label="Voorschot" value={fmtEur(p.voorschot)} color="#9b72cf"/></div>}
@@ -1240,7 +1255,7 @@ function HuurApp() {
                                     {d.allPayments&&d.allPayments.map((p,pi)=>(
                                       <div key={pi} style={{ display:"flex", gap:6, alignItems:"center", marginTop:2 }}>
                                         {d.allPayments.length>1&&<span style={{ fontSize:11, color:"#52b788", fontWeight:600 }}>{fmtEur(p.amount)}</span>}
-                                        <span style={{ fontSize:11, color:"#4a90c8" }}>📅 {p.date}</span>
+                                        <span style={{ fontSize:11, color:"#4a90c8" }}>📅 {fmtDate(p.date)}</span>
                                         {p.note&&<span style={{ fontSize:10, color:"#4a6080", fontStyle:"italic" }}>— {p.note}</span>}
                                       </div>
                                     ))}
