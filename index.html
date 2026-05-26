@@ -84,10 +84,17 @@ const totalDue = t => (t?.rent || 0) + (t?.voorschot || 0);
 // Parse any date string to local Date (avoids UTC timezone issues)
 const parseHistDate = (str) => {
   if (!str) return new Date(0);
+  // DD-MM-YYYY
+  if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+    const [d,m,y] = str.split('-').map(Number);
+    return new Date(y, m-1, d);
+  }
+  // DD/MM/YYYY
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
     const [d,m,y] = str.split('/').map(Number);
     return new Date(y, m-1, d);
   }
+  // YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
     const [y,m,d] = str.slice(0,10).split('-').map(Number);
     return new Date(y, m-1, d);
@@ -322,7 +329,7 @@ function HuurApp() {
   const applyIndexation = () => {
     if (!amt&&!voorAmt) return;
     const monthStr = String(idxMonth+1).padStart(2,'0');
-    const dateStr = `${monthStr}/01/${idxYear}`;
+    const dateStr = `01-${monthStr}-${idxYear}`;
     setTenants(prev => {
       const next={...prev};
       Object.keys(idxSel).forEach(uid => {
@@ -788,17 +795,22 @@ function HuurApp() {
           // Parse any date string to a local Date object (avoids UTC timezone shift)
           const parseDate = (str) => {
             if (!str) return new Date(0);
-            // dd/mm/yyyy
+            // DD-MM-YYYY
+            if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+              const [d,m,y] = str.split('-').map(Number);
+              return new Date(y, m-1, d);
+            }
+            // DD/MM/YYYY
             if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
               const [d,m,y] = str.split('/').map(Number);
               return new Date(y, m-1, d);
             }
-            // mm/dd/yyyy fallback or yyyy-mm-dd
+            // YYYY-MM-DD
             if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
               const [y,m,d] = str.split('-').map(Number);
               return new Date(y, m-1, d);
             }
-            // yyyy-mm-dd with time
+            // YYYY-MM-DD with time
             if (str.includes('T')) {
               const [datePart] = str.split('T');
               const [y,m,d] = datePart.split('-').map(Number);
