@@ -651,7 +651,7 @@ function HuurApp() {
                         <div style={{ display:"flex", alignItems:"center", gap:9 }}>
                           <div style={{ textAlign:"right" }}>
                             <div style={{ fontSize:14, fontWeight:700, color:"#52b788" }}>{fmtEur(p.amount)}</div>
-                            <div style={{ fontSize:10, color:"#7a8fa6" }}>{p.date}</div>
+                            <div style={{ fontSize:10, color:"#7a8fa6" }}>{fmtDate(p.date)}</div>
                           </div>
                           <button onClick={()=>openPaymentModal(null, p)} style={{ background:"none", border:"none", cursor:"pointer", color:"#c9a84c", padding:4 }} title="Bewerken">✏️</button>
                           <button onClick={()=>deletePayment(p.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"#4a5a6a", padding:4 }}><Ic n="trash" s={14}/></button>
@@ -953,8 +953,8 @@ function HuurApp() {
                 : '';
               const dateInfo = d.paid && d.allPayments
                 ? d.allPayments.length === 1
-                  ? d.allPayments[0].date
-                  : d.allPayments.map(p=>p.date+(p.note?' ('+p.note+')':'')).join('<br>')
+                  ? fmtDate(d.allPayments[0].date)
+                  : d.allPayments.map(p=>fmtDate(p.date)+(p.note?' ('+p.note+')':'')).join('<br>')
                 : future ? '—' : '—';
               return `<tr style="border-bottom:1px solid #eee;${d.paid&&diff<0?'background:#fff8f0':''}">
                 <td style="padding:7px 10px;font-weight:600">${mn}</td>
@@ -1023,7 +1023,7 @@ function HuurApp() {
                 <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1a3a5c">€ ${d.expected.toFixed(2).replace('.',',')}</td>
                 <td style="padding:7px 10px;text-align:right;color:#2d6a4f;font-weight:700">${d.paid?'€ '+d.amount.toFixed(2).replace('.',','):'—'}</td>
                 <td style="padding:7px 10px;text-align:center;color:${diff<0?'#c0392b':diff>0?'#8e44ad':'#2d6a4f'}">${diffStr}</td>
-                <td style="padding:7px 10px;color:#888;font-size:12px">${d.date}</td>
+                <td style="padding:7px 10px;color:#888;font-size:12px">${fmtDate(d.date)}</td>
               </tr>`;
             }).join('');
             w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Maandrapport ${MONTHS_NL[rapportMonth]} ${rapportYear}</title>
@@ -1084,7 +1084,7 @@ function HuurApp() {
                 d.paid?d.voorschot:null,
                 d.paid?d.amount:null,
                 diff,
-                d.paid?d.date:"",
+                d.paid?fmtDate(d.date):"",
                 d.note||""
               ];
             });
@@ -1111,7 +1111,7 @@ function HuurApp() {
             const rows = maandData.map(d=>{
               const diff = d.paid ? round2(d.amount - d.expected) : null;
               const status = d.paid?(diff<0?"Deels betaald":"Betaald"):"Niet betaald";
-              return [d.unitName, d.name, d.bldName, status, d.expRent, d.expVoor, d.expected, d.paid?d.rent:null, d.paid?d.voorschot:null, d.paid?d.amount:null, diff, d.date||"", d.note||""];
+              return [d.unitName, d.name, d.bldName, status, d.expRent, d.expVoor, d.expected, d.paid?d.rent:null, d.paid?d.voorschot:null, d.paid?d.amount:null, diff, d.paid?fmtDate(d.date):"", d.note||""];
             });
             const totaalRow = ["TOTAAL","","","",
               maandData.reduce((s,d)=>s+d.expRent,0),
