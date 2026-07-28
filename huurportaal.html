@@ -1,0 +1,1528 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Huurportaal"/>
+  <meta name="theme-color" content="#0f1923"/>
+  <title>Huurportaal</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyCJWvmWr6TGshe9Q2f_CY6at19q-2woHfE",
+      authDomain: "emilco-invest.firebaseapp.com",
+      projectId: "emilco-invest",
+      storageBucket: "emilco-invest.firebasestorage.app",
+      messagingSenderId: "791042643956",
+      appId: "1:791042643956:web:71e9c02a4a0a6affba4ba1"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+  </script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f1923; font-family: 'Georgia', 'Times New Roman', serif; color: #e8e0d0; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #0f1923; }
+    ::-webkit-scrollbar-thumb { background: #2a3a50; border-radius: 2px; }
+    select option { background: #1a2940; }
+    optgroup { background: #1a2940; }
+    @media print {
+      body { background: white !important; color: black !important; }
+      .no-print { display: none !important; }
+      .print-area { display: block !important; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const BUILDINGS = [
+  { id: "sn", name: "Sint-Niklaas" },
+  { id: "an", name: "Antwerpen" },
+];
+const UNITS = [
+  { id: "sn-apt",  buildingId: "sn", name: "Appartement",    type: "appartement" },
+  { id: "sn-mag1", buildingId: "sn", name: "Magazijn 1",     type: "magazijn" },
+  { id: "sn-mag2", buildingId: "sn", name: "Magazijn 2",     type: "magazijn" },
+  { id: "an-1",   buildingId: "an", name: "Appartement -1",  type: "appartement" },
+  { id: "an0",    buildingId: "an", name: "Appartement 0",   type: "appartement" },
+  { id: "an1",    buildingId: "an", name: "Appartement 1",   type: "appartement" },
+  { id: "an2",    buildingId: "an", name: "Appartement 2",   type: "appartement" },
+  { id: "an3",    buildingId: "an", name: "Appartement 3",   type: "appartement" },
+];
+const MONTHS_NL = ["Januari","Februari","Maart","April","Mei","Juni","Juli","Augustus","September","Oktober","November","December"];
+const today = new Date();
+const DEFAULT_MONTH = today.getMonth();
+const DEFAULT_YEAR  = today.getFullYear();
+
+// localStorage helpers (kept for backup/import feature)
+function loadDataLocal(key) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+function saveDataLocal(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
+const fmtEur  = n => "€ " + Number(n).toLocaleString("nl-BE", { minimumFractionDigits:2, maximumFractionDigits:2 });
+
+// Format any date string to DD/MM/YYYY
+const fmtDate = (str) => {
+  if (!str) return "";
+  // DD-MM-YYYY → already correct format, just replace - with /
+  if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) return str.replace(/-/g, "/");
+  // DD/MM/YYYY → already correct
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) return str;
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const [y,m,d] = str.slice(0,10).split("-");
+    return d+"/"+m+"/"+y;
+  }
+  return str;
+};
+const round2  = n => Math.round(n * 100) / 100;
+const totalDue = t => (t?.rent || 0) + (t?.voorschot || 0);
+
+// Parse any date string to local Date (avoids UTC timezone issues)
+const parseHistDate = (str) => {
+  if (!str) return new Date(0);
+  // DD-MM-YYYY
+  if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+    const [d,m,y] = str.split('-').map(Number);
+    return new Date(y, m-1, d);
+  }
+  // DD/MM/YYYY
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+    const [d,m,y] = str.split('/').map(Number);
+    return new Date(y, m-1, d);
+  }
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const [y,m,d] = str.slice(0,10).split('-').map(Number);
+    return new Date(y, m-1, d);
+  }
+  return new Date(str);
+};
+
+// Get the rent applicable for a given month/year based on rentHistory
+const getExpectedForMonth = (t, month, year) => {
+  if (!t) return { rent:0, voorschot:0 };
+  const history = t.rentHistory || [];
+  if (history.length === 0) return { rent: t.rent||0, voorschot: t.voorschot||0 };
+  const sorted = [...history].sort((a,b) => parseHistDate(a.date) - parseHistDate(b.date));
+  const target = new Date(year, month, 1);
+  let applicable = sorted[0];
+  for (const h of sorted) {
+    if (parseHistDate(h.date) <= target) applicable = h;
+  }
+  return applicable ? { rent: applicable.rent||0, voorschot: applicable.voorschot||0 } : { rent: t.rent||0, voorschot: t.voorschot||0 };
+};
+
+// Icons
+const Ic = ({ n, s=16 }) => {
+  const icons = {
+    building:  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 22V12h6v10M9 7h1M14 7h1M9 11h1M14 11h1"/></svg>,
+    euro:      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M15 9.5a4 4 0 1 0 0 5M8 11h7M8 13h7"/></svg>,
+    check:     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M20 6L9 17l-5-5"/></svg>,
+    x:         <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>,
+    plus:      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>,
+    trash:     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>,
+    list:      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>,
+    home:      <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 12L12 3l9 9M5 10v9a1 1 0 001 1h4v-4h4v4h4a1 1 0 001-1v-9"/></svg>,
+    warehouse: <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 9L12 3l9 6v11H3z"/><path d="M9 22V12h6v10"/></svg>,
+    trend:     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 7l-8 8-4-4-6 6"/><path d="M16 7h6v6"/></svg>,
+    history:   <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>,
+  };
+  return icons[n] || null;
+};
+
+const S = {
+  input:  { background:"#0f1923", border:"1px solid #2a3a50", borderRadius:8, padding:"9px 12px", color:"#e8e0d0", fontSize:14, width:"100%", fontFamily:"inherit", boxSizing:"border-box", outline:"none" },
+  label:  { display:"block", fontSize:11, color:"#7a8fa6", marginBottom:4, textTransform:"uppercase", letterSpacing:"0.07em" },
+  gold:   { background:"linear-gradient(135deg,#c9a84c,#e8c96a)", border:"none", borderRadius:8, padding:"9px 16px", color:"#0f1923", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 },
+  cancel: { background:"#1a2940", border:"1px solid #2a3a50", borderRadius:8, padding:"9px 16px", color:"#7a8fa6", fontSize:13, cursor:"pointer", fontFamily:"inherit" },
+  small:  { background:"#2a3a5044", border:"1px solid #2a3a50", borderRadius:6, padding:"6px 12px", color:"#c9a84c", fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+  select: { background:"#1a2940", border:"1px solid #2a3a50", borderRadius:8, padding:"7px 10px", color:"#e8e0d0", fontSize:13, fontFamily:"inherit", cursor:"pointer", outline:"none" },
+};
+
+const Pill = ({ label, value, color }) => (
+  <span style={{ fontSize:10, background:`${color}22`, border:`1px solid ${color}55`, borderRadius:4, padding:"1px 5px", color, whiteSpace:"nowrap" }}>
+    {label}: {value}
+  </span>
+);
+
+function HuurApp() {
+  const [tab,         setTab]       = useState("dashboard");
+  const [tenants,     setTenants]   = useState({});
+  const [payments,    setPayments]  = useState([]);
+  const [filterMonth, setFilter_M]  = useState(DEFAULT_MONTH);
+  const [filterYear,  setFilter_Y]  = useState(DEFAULT_YEAR);
+  const [modal,       setModal]     = useState(null);
+  const [form,        setForm]      = useState({});
+  const [openUnit,    setOpenUnit]  = useState(null);
+  const [rapportType,    setRapportType]    = useState("huurder");
+  const [rapportUnit,    setRapportUnit]    = useState("");
+  const [rapportYear,    setRapportYear]    = useState(DEFAULT_YEAR);
+  const [rapportMonth,   setRapportMonth]   = useState(DEFAULT_MONTH);
+  const [rapportMode,    setRapportMode]    = useState("jaar");   // "jaar" | "periode"
+  const [rapportFromM,   setRapportFromM]   = useState(0);
+  const [rapportFromY,   setRapportFromY]   = useState(DEFAULT_YEAR);
+  const [rapportToM,     setRapportToM]     = useState(DEFAULT_MONTH);
+  const [rapportToY,     setRapportToY]     = useState(DEFAULT_YEAR);
+  const [idxAmt,     setIdxAmt]     = useState("");
+  const [idxVoorAmt, setIdxVoorAmt] = useState("");
+  const [idxMonth,   setIdxMonth]   = useState(0);
+  const [idxYear,    setIdxYear]    = useState(DEFAULT_YEAR);
+  const [idxNote,    setIdxNote]    = useState("");
+  const [idxSel,     setIdxSel]     = useState({});
+  const [idxDone,    setIdxDone]    = useState(false);
+
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
+  // Firebase realtime listeners
+  useEffect(() => {
+    // Listen to tenants
+    const unsubT = db.collection("data").doc("tenants").onSnapshot(snap => {
+      if (snap.exists) setTenants(snap.data().value || {});
+    });
+    // Listen to payments
+    const unsubP = db.collection("data").doc("payments").onSnapshot(snap => {
+      if (snap.exists) setPayments(snap.data().value || []);
+    });
+    return () => { unsubT(); unsubP(); };
+  }, []);
+
+  const saveToFirebase = async (collection, docId, value) => {
+    try {
+      setSyncing(true);
+      await db.collection(collection).doc(docId).set({ value });
+      setSyncing(false);
+    } catch(e) {
+      setSyncing(false);
+      setSyncMsg("⚠️ Sync fout: " + e.message);
+      setTimeout(() => setSyncMsg(""), 4000);
+    }
+  };
+
+  const saveTenantsFB  = (data) => saveToFirebase("data", "tenants",  data);
+  const savePaymentsFB = (data) => saveToFirebase("data", "payments", data);
+
+  useEffect(() => {
+    if (tab === "indexatie") {
+      const sel = {};
+      UNITS.forEach(u => { if (tenants[u.id]) sel[u.id] = true; });
+      setIdxSel(sel);
+      setIdxDone(false);
+    }
+  }, [tab]);
+
+  const openTenantModal = (unitId) => {
+    const t = tenants[unitId];
+    setForm(t ? { name:t.name, rent:t.rent, voorschot:t.voorschot||"" } : { name:"", rent:"", voorschot:"" });
+    setModal({ type:"tenant", unitId });
+  };
+
+  const openHistoryModal = (unitId, historyIndex) => {
+    const t = tenants[unitId];
+    const realIndex = (t.rentHistory.length - 1) - historyIndex; // because we reversed
+    const h = t.rentHistory[realIndex];
+    setForm({ rent: h.rent, voorschot: h.voorschot||0, date: h.date, note: h.note||"", realIndex, unitId });
+    setModal({ type:"history", unitId });
+  };
+
+  const saveHistory = () => {
+    if (!form.rent) return;
+    setTenants(prev => {
+      const t = prev[form.unitId];
+      const newHistory = [...(t.rentHistory||[])];
+      newHistory[form.realIndex] = { rent:Number(form.rent), voorschot:Number(form.voorschot)||0, date:form.date, note:form.note };
+      // Update current rent to last history entry
+      const sorted = [...newHistory].sort((a,b)=>new Date(a.date.includes('/')?a.date.split('/').reverse().join('-'):a.date)-new Date(b.date.includes('/')?b.date.split('/').reverse().join('-'):b.date));
+      const last = sorted[sorted.length-1];
+      const next = { ...prev, [form.unitId]: { ...t, rent:last.rent, voorschot:last.voorschot||0, rentHistory:newHistory } };
+      saveTenantsFB(next);
+      return next;
+    });
+    setModal(null);
+  };
+
+  const deleteHistory = (unitId, historyIndex) => {
+    const realIndex = (tenants[unitId].rentHistory.length - 1) - historyIndex;
+    setTenants(prev => {
+      const t = prev[unitId];
+      const newHistory = (t.rentHistory||[]).filter((_,i)=>i!==realIndex);
+      const sorted = [...newHistory].sort((a,b)=>new Date(a.date.includes('/')?a.date.split('/').reverse().join('-'):a.date)-new Date(b.date.includes('/')?b.date.split('/').reverse().join('-'):b.date));
+      const last = sorted.length>0 ? sorted[sorted.length-1] : { rent:t.rent, voorschot:t.voorschot||0 };
+      const next = { ...prev, [unitId]: { ...t, rent:last.rent, voorschot:last.voorschot||0, rentHistory:newHistory } };
+      saveTenantsFB(next);
+      return next;
+    });
+  };
+
+  const saveTenant = () => {
+    if (!form.name || !form.rent) return;
+    const newRent = Number(form.rent);
+    const newVoor = form.voorschot ? Number(form.voorschot) : 0;
+    setTenants(prev => {
+      const ex = prev[modal.unitId];
+      const history = ex?.rentHistory || [];
+      const changed = !ex || ex.rent !== newRent || (ex.voorschot||0) !== newVoor;
+      const next = {
+        ...prev,
+        [modal.unitId]: {
+          name: form.name, rent: newRent, voorschot: newVoor,
+          rentHistory: changed ? [...history, { rent:newRent, voorschot:newVoor, date:today.toISOString().slice(0,10), note: ex?"Handmatige aanpassing":"Initieel" }] : history,
+        },
+      };
+      saveTenantsFB(next);
+      return next;
+    });
+    setModal(null);
+  };
+
+  const deleteTenant = uid => {
+    const next = {...tenants}; delete next[uid];
+    setTenants(next);
+    saveTenantsFB(next);
+  };
+
+  const openPaymentModal = (unitId=null, existingPayment=null) => {
+    if (existingPayment) {
+      setForm({ id:existingPayment.id, unitId:existingPayment.unitId, rent:existingPayment.rent||existingPayment.amount, voorschot:existingPayment.voorschot||0, date:existingPayment.date, month:existingPayment.month, year:existingPayment.year, note:existingPayment.note||"" });
+      setModal({ type:"payment", editing:true });
+    } else {
+      const t = unitId ? tenants[unitId] : null;
+      const d = new Date();
+      setForm({ unitId:unitId||"", rent:t?t.rent:"", voorschot:t?(t.voorschot||0):"", date:d.toISOString().slice(0,10), month:d.getMonth(), year:d.getFullYear(), note:"" });
+      setModal({ type:"payment", editing:false });
+    }
+  };
+
+  const savePayment = () => {
+    if (!form.unitId || !form.date) return;
+    const rentAmt = Number(form.rent)||0;
+    const voorAmt = Number(form.voorschot)||0;
+    if (!rentAmt && !voorAmt) return;
+    if (modal.editing && form.id) {
+      const next = payments.map(x => x.id===form.id ? { ...x, unitId:form.unitId, rent:rentAmt, voorschot:voorAmt, amount:rentAmt+voorAmt, date:form.date, month:Number(form.month), year:Number(form.year), note:form.note } : x);
+      setPayments(next);
+      savePaymentsFB(next);
+    } else {
+      const next = [{ id:Date.now(), unitId:form.unitId, rent:rentAmt, voorschot:voorAmt, amount:rentAmt+voorAmt, date:form.date, month:Number(form.month), year:Number(form.year), note:form.note }, ...payments];
+      setPayments(next);
+      savePaymentsFB(next);
+    }
+    setModal(null);
+  };
+
+  const deletePayment = id => {
+    const next = payments.filter(x => x.id !== id);
+    setPayments(next);
+    savePaymentsFB(next);
+  };
+
+  const amt     = parseFloat(idxAmt)||0;
+  const voorAmt  = parseFloat(idxVoorAmt)||0;
+  const previewRent  = uid => round2((tenants[uid]?.rent||0) + amt);
+  const previewVoor  = uid => round2((tenants[uid]?.voorschot||0) + voorAmt);
+  const previewTotal = uid => previewRent(uid)+previewVoor(uid);
+
+  const applyIndexation = () => {
+    if (!amt&&!voorAmt) return;
+    const monthStr = String(idxMonth+1).padStart(2,'0');
+    const dateStr = `01-${monthStr}-${idxYear}`;
+    setTenants(prev => {
+      const next={...prev};
+      Object.keys(idxSel).forEach(uid => {
+        if (!idxSel[uid]||!next[uid]) return;
+        const nr=previewRent(uid), nv=previewVoor(uid);
+        next[uid] = { ...next[uid], rent:nr, voorschot:nv, rentHistory:[...(next[uid].rentHistory||[]),{ rent:nr, voorschot:nv, date:dateStr, note:idxNote||`Indexatie ${idxYear} (+${fmtEur(amt)})` }] };
+      });
+      saveTenantsFB(next);
+      return next;
+    });
+    setIdxDone(true);
+  };
+
+  const isPaid     = (uid,m,y) => payments.some(p=>p.unitId===uid&&p.month===m&&p.year===y);
+  const getPayment = (uid,m,y) => payments.find(p=>p.unitId===uid&&p.month===m&&p.year===y);
+  const occupiedUnits = UNITS.filter(u=>tenants[u.id]);
+  const totalExp = occupiedUnits.reduce((s,u)=>s+totalDue(tenants[u.id]),0);
+  const totalRec = occupiedUnits.filter(u=>isPaid(u.id,filterMonth,filterYear)).reduce((s,u)=>s+(getPayment(u.id,filterMonth,filterYear)?.amount||0),0);
+  const paidCnt  = occupiedUnits.filter(u=>isPaid(u.id,filterMonth,filterYear)).length;
+  const occCnt   = occupiedUnits.length;
+
+  const navTabs = [["dashboard","home","Overzicht"],["units","building","Eenheden"],["payments","list","Betalingen"],["indexatie","trend","Indexatie"],["rapporten","euro","Rapporten"],["backup","history","Backup"]];
+
+  const fixPaymentAmounts = () => {
+    let fixed = 0;
+    const next = payments.map(p => {
+      const correctAmount = (Number(p.rent)||0) + (Number(p.voorschot)||0);
+      if (correctAmount > 0 && Math.abs(p.amount - correctAmount) > 0.01) {
+        fixed++;
+        return { ...p, amount: correctAmount };
+      }
+      return p;
+    });
+    if (fixed > 0) {
+      setPayments(next);
+      savePaymentsFB(next);
+      alert(fixed + ' betaling(en) hersteld!');
+    } else {
+      alert('Alle betalingen zijn al correct.');
+    }
+  };
+
+  const exportData = () => {
+    const data = { tenants, payments, exportDate: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = "huurportaal-backup-" + new Date().toISOString().slice(0,10) + ".json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.tenants) { setTenants(data.tenants); saveTenantsFB(data.tenants); }
+        if (data.payments) { setPayments(data.payments); savePaymentsFB(data.payments); }
+        alert("Data succesvol ingeladen en gesynchroniseerd!");
+      } catch {
+        alert("Fout bij inladen. Controleer of het een geldig backup-bestand is.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  return (
+    <div style={{ fontFamily:"'Georgia','Times New Roman',serif", background:"#0f1923", minHeight:"100vh", color:"#e8e0d0" }}>
+
+      {/* Header */}
+      <div style={{ background:"linear-gradient(135deg,#1a2940 0%,#0f1923 100%)", borderBottom:"1px solid #2a3a50", padding:"18px 20px 0", position:"sticky", top:0, zIndex:100 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+          <div style={{ width:34, height:34, background:"linear-gradient(135deg,#c9a84c,#e8c96a)", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <Ic n="building" s={16}/>
+          </div>
+          <div>
+            <div style={{ fontSize:17, fontWeight:700, letterSpacing:"0.02em" }}>Huurportaal {syncing && <span style={{fontSize:11, color:"#c9a84c", fontWeight:400}}>⟳ sync...</span>}</div>
+            {syncMsg && <div style={{fontSize:11, color:"#e07a40"}}>{syncMsg}</div>}
+            <div style={{ fontSize:10, color:"#7a8fa6", letterSpacing:"0.09em", textTransform:"uppercase" }}>Sint-Niklaas · Antwerpen</div>
+          </div>
+        </div>
+        <div style={{ display:"flex", overflowX:"auto" }}>
+          {navTabs.map(([t,ic,lbl])=>(
+            <button key={t} onClick={()=>setTab(t)} style={{ background:"none", border:"none", color:tab===t?"#c9a84c":"#7a8fa6", padding:"7px 14px", cursor:"pointer", fontSize:13, fontFamily:"inherit", borderBottom:tab===t?"2px solid #c9a84c":"2px solid transparent", transition:"all 0.2s", display:"flex", alignItems:"center", gap:5, fontWeight:tab===t?600:400, whiteSpace:"nowrap" }}>
+              <Ic n={ic} s={13}/>{lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding:"18px 14px", maxWidth:700, margin:"0 auto" }}>
+
+        {/* DASHBOARD */}
+        {tab==="dashboard" && (
+          <div>
+            <div style={{ display:"flex", gap:8, marginBottom:18, alignItems:"center", flexWrap:"wrap" }}>
+              <select value={filterMonth} onChange={e=>setFilter_M(Number(e.target.value))} style={S.select}>
+                {MONTHS_NL.map((m,i)=><option key={i} value={i}>{m}</option>)}
+              </select>
+              <select value={filterYear} onChange={e=>setFilter_Y(Number(e.target.value))} style={S.select}>
+                {[2021,2022,2023,2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+              <button onClick={()=>openPaymentModal()} style={S.gold}><Ic n="plus" s={13}/> Betaling</button>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
+              {[[fmtEur(totalRec),`${paidCnt}/${occCnt} betaald`,"Ontvangen","#2d6a4f","#52b788"],[fmtEur(totalExp),`${occCnt} huurders`,"Verwacht","#1a3a5c","#4a90c8"],[fmtEur(Math.max(0,totalExp-totalRec)),`${occCnt-paidCnt} open`,"Openstaand","#5c2d1a","#e07a40"]].map(([val,sub,lbl,bg,acc])=>(
+                <div key={lbl} style={{ background:`${bg}33`, border:`1px solid ${acc}44`, borderRadius:10, padding:"12px 10px" }}>
+                  <div style={{ fontSize:10, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:3 }}>{lbl}</div>
+                  <div style={{ fontSize:16, fontWeight:700, color:acc, marginBottom:2 }}>{val}</div>
+                  <div style={{ fontSize:11, color:"#7a8fa6" }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {BUILDINGS.map(b=>{
+              const units=UNITS.filter(u=>u.buildingId===b.id);
+              return (
+                <div key={b.id} style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:12, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:7, display:"flex", alignItems:"center", gap:6 }}>
+                    <div style={{ width:7, height:7, borderRadius:"50%", background:b.id==="sn"?"#4a90c8":"#52b788" }}/>{b.name}
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                    {units.map(u=>{
+                      const tenant=tenants[u.id], paid=tenant&&isPaid(u.id,filterMonth,filterYear), payment=paid?getPayment(u.id,filterMonth,filterYear):null;
+                      const expData=tenant?getExpectedForMonth(tenant,filterMonth,filterYear):{rent:0,voorschot:0};
+                      const due=expData.rent+expData.voorschot;
+                      return (
+                        <div key={u.id} onClick={()=>{setOpenUnit(u.id);setTab("units");}} style={{ background:"#1a2940", border:`1px solid ${paid?"#2d6a4f":tenant?"#5c3a1a":"#2a3a50"}`, borderRadius:9, padding:"11px 13px", cursor:"pointer" }}>
+                          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                              <div style={{ width:30, height:30, borderRadius:7, background:paid?"#2d6a4f55":tenant?"#5c3a1a55":"#2a3a50", display:"flex", alignItems:"center", justifyContent:"center", color:paid?"#52b788":tenant?"#e07a40":"#4a6080", flexShrink:0 }}>
+                                <Ic n={u.type==="magazijn"?"warehouse":"home"} s={14}/>
+                              </div>
+                              <div>
+                                <div style={{ fontSize:13, fontWeight:600 }}>{u.name}</div>
+                                <div style={{ fontSize:12, color:"#7a8fa6" }}>{tenant?tenant.name:<span style={{fontStyle:"italic"}}>Geen huurder</span>}</div>
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                              {tenant&&<div style={{ textAlign:"right" }}>
+                                <div style={{ fontSize:13, fontWeight:700, color:paid?"#52b788":"#e07a40" }}>{paid?fmtEur(payment.amount):fmtEur(due)}</div>
+                                <div style={{ fontSize:10, color:"#7a8fa6" }}>{paid?fmtDate(payment.date):"verwacht"}</div>
+                              </div>}
+                              <div style={{ width:22, height:22, borderRadius:"50%", background:paid?"#2d6a4f":tenant?"#5c3a1a":"#2a3a50", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                                {paid?<Ic n="check" s={11}/>:tenant?<Ic n="x" s={11}/>:null}
+                              </div>
+                            </div>
+                          </div>
+                          {tenant&&(expData.voorschot>0||(paid&&payment.voorschot>0))&&(
+                            <div style={{ display:"flex", gap:5, marginTop:6, marginLeft:39, flexWrap:"wrap" }}>
+                              <Pill label="Huur" value={fmtEur(paid?payment.rent:expData.rent)} color="#4a90c8"/>
+                              <Pill label="Voorschot" value={fmtEur(paid?payment.voorschot:expData.voorschot)} color="#9b72cf"/>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* EENHEDEN */}
+        {tab==="units" && (
+          <div>
+            {BUILDINGS.map(b=>{
+              const units=UNITS.filter(u=>u.buildingId===b.id);
+              return (
+                <div key={b.id} style={{ marginBottom:18 }}>
+                  <div style={{ fontSize:12, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:9, display:"flex", alignItems:"center", gap:6 }}>
+                    <div style={{ width:7, height:7, borderRadius:"50%", background:b.id==="sn"?"#4a90c8":"#52b788" }}/>{b.name}
+                  </div>
+                  {units.map(u=>{
+                    const tenant=tenants[u.id], open=openUnit===u.id, unitPayments=payments.filter(p=>p.unitId===u.id).slice(0,6);
+                    return (
+                      <div key={u.id} style={{ marginBottom:7 }}>
+                        <div onClick={()=>setOpenUnit(open?null:u.id)} style={{ background:"#1a2940", border:`1px solid ${open?"#c9a84c44":"#2a3a50"}`, borderRadius:open?"9px 9px 0 0":9, padding:"11px 13px", display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                            <div style={{ width:30, height:30, borderRadius:7, background:"#2a3a50", display:"flex", alignItems:"center", justifyContent:"center", color:"#c9a84c" }}>
+                              <Ic n={u.type==="magazijn"?"warehouse":"home"} s={14}/>
+                            </div>
+                            <div>
+                              <div style={{ fontSize:13, fontWeight:600 }}>{u.name}</div>
+                              <div style={{ fontSize:12, color:"#7a8fa6" }}>
+                                {tenant
+                                  ? <>{tenant.name}{tenant.voorschot>0?<> · <span style={{color:"#4a90c8"}}>{fmtEur(tenant.rent)}</span> + <span style={{color:"#9b72cf"}}>{fmtEur(tenant.voorschot)}</span> = <span style={{color:"#c9a84c"}}>{fmtEur(totalDue(tenant))}/mnd</span></>:<> · {fmtEur(tenant.rent)}/mnd</>}</>
+                                  : <span style={{fontStyle:"italic"}}>Leeg</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <span style={{ color:"#c9a84c", fontSize:18 }}>{open?"−":"+"}</span>
+                        </div>
+                        {open&&(
+                          <div style={{ background:"#141f2e", border:"1px solid #c9a84c44", borderTop:"none", borderRadius:"0 0 9px 9px", padding:14 }}>
+                            {tenant?(
+                              <div>
+                                <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+                                  <div style={{ background:"#1a2940", border:"1px solid #4a90c844", borderRadius:8, padding:"8px 12px", flex:1, minWidth:80 }}>
+                                    <div style={{ fontSize:10, color:"#7a8fa6", marginBottom:2 }}>HUUR</div>
+                                    <div style={{ fontSize:15, fontWeight:700, color:"#4a90c8" }}>{fmtEur(tenant.rent)}</div>
+                                  </div>
+                                  {tenant.voorschot>0&&<div style={{ background:"#1a2940", border:"1px solid #9b72cf44", borderRadius:8, padding:"8px 12px", flex:1, minWidth:80 }}>
+                                    <div style={{ fontSize:10, color:"#7a8fa6", marginBottom:2 }}>VOORSCHOT</div>
+                                    <div style={{ fontSize:15, fontWeight:700, color:"#9b72cf" }}>{fmtEur(tenant.voorschot)}</div>
+                                  </div>}
+                                  <div style={{ background:"#1a2940", border:"1px solid #c9a84c44", borderRadius:8, padding:"8px 12px", flex:1, minWidth:80 }}>
+                                    <div style={{ fontSize:10, color:"#7a8fa6", marginBottom:2 }}>TOTAAL/MND</div>
+                                    <div style={{ fontSize:15, fontWeight:700, color:"#c9a84c" }}>{fmtEur(totalDue(tenant))}</div>
+                                  </div>
+                                </div>
+                                <div style={{ display:"flex", gap:7, marginBottom:14, flexWrap:"wrap" }}>
+                                  <button onClick={()=>openTenantModal(u.id)} style={S.small}>✏️ Bewerken</button>
+                                  <button onClick={()=>deleteTenant(u.id)} style={{...S.small,background:"#5c2d1a44",borderColor:"#e07a4044",color:"#e07a40"}}>🗑 Verwijderen</button>
+                                  <button onClick={()=>openPaymentModal(u.id)} style={{...S.small,background:"#2d6a4f44",borderColor:"#52b78844",color:"#52b788"}}>+ Betaling</button>
+                                </div>
+                                {(tenant.rentHistory||[]).length>0&&(
+                                  <div style={{ marginBottom:14 }}>
+                                    <div style={{ fontSize:11, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:7, display:"flex", alignItems:"center", gap:5 }}>
+                                      <Ic n="history" s={12}/>Historiek
+                                    </div>
+                                    {[...(tenant.rentHistory||[])].reverse().map((h,i)=>{
+                                      const isLatest = i===0;
+                                      return (
+                                        <div key={i} style={{ padding:"7px 0", borderBottom:"1px solid #2a3a50", fontSize:12 }}>
+                                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:4 }}>
+                                            <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+                                              {isLatest&&<span style={{ fontSize:9, background:"#c9a84c33", border:"1px solid #c9a84c55", color:"#c9a84c", borderRadius:3, padding:"1px 4px" }}>HUIDIG</span>}
+                                              <span style={{ color:"#4a90c8", fontWeight:600 }}>{fmtEur(h.rent)}</span>
+                                              {h.voorschot>0&&<span style={{ color:"#9b72cf", fontWeight:600 }}>+{fmtEur(h.voorschot)} vrs.</span>}
+                                              <span style={{ color:"#c9a84c" }}>= {fmtEur((h.rent||0)+(h.voorschot||0))}</span>
+                                            </div>
+                                            <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                                              <span style={{ color:"#7a8fa6" }}>{fmtDate(h.date)}</span>
+                                              <button onClick={()=>openHistoryModal(u.id,i)} style={{ background:"none", border:"none", cursor:"pointer", color:"#c9a84c", padding:"2px 4px", fontSize:12 }} title="Bewerken">✏️</button>
+                                              {!isLatest&&<button onClick={()=>{ if(confirm("Wil je deze historiek-entry verwijderen?")) deleteHistory(u.id,i); }} style={{ background:"none", border:"none", cursor:"pointer", color:"#5a4a4a", padding:"2px 4px" }} title="Verwijderen"><Ic n="trash" s={12}/></button>}
+                                            </div>
+                                          </div>
+                                          {h.note&&<div style={{ fontSize:10, color:"#4a6080", fontStyle:"italic", marginTop:2 }}>{h.note}</div>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                <div style={{ fontSize:11, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6 }}>Laatste betalingen</div>
+                                {unitPayments.length===0
+                                  ?<div style={{ fontSize:12, color:"#4a6080", fontStyle:"italic" }}>Geen betalingen</div>
+                                  :unitPayments.map(p=>(
+                                    <div key={p.id} style={{ padding:"6px 0", borderBottom:"1px solid #2a3a50" }}>
+                                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12 }}>
+                                        <span style={{ color:"#7a8fa6" }}>{MONTHS_NL[p.month]} {p.year}</span>
+                                        <span style={{ color:"#52b788", fontWeight:700 }}>{fmtEur(p.amount)}</span>
+                                        <span style={{ color:"#4a6080" }}>{fmtDate(p.date)}</span>
+                                        <button onClick={()=>deletePayment(p.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"#5a4a4a", padding:2 }}><Ic n="trash" s={13}/></button>
+                                      </div>
+                                      {p.voorschot>0&&<div style={{ display:"flex", gap:6, marginTop:3 }}><Pill label="Huur" value={fmtEur(p.rent)} color="#4a90c8"/><Pill label="Voorschot" value={fmtEur(p.voorschot)} color="#9b72cf"/></div>}
+                                      {p.note&&<div style={{ fontSize:10, color:"#4a6080", fontStyle:"italic", marginTop:2 }}>{p.note}</div>}
+                                    </div>
+                                  ))
+                                }
+                              </div>
+                            ):(
+                              <button onClick={()=>openTenantModal(u.id)} style={S.gold}><Ic n="plus" s={13}/> Huurder toevoegen</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* BETALINGEN */}
+        {tab==="payments"&&(
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontSize:12, color:"#7a8fa6" }}>{payments.length} betalingen</div>
+              <button onClick={()=>openPaymentModal()} style={S.gold}><Ic n="plus" s={13}/> Nieuwe betaling</button>
+            </div>
+            {payments.length===0?<div style={{ textAlign:"center", padding:40, color:"#4a6080", fontStyle:"italic" }}>Nog geen betalingen</div>:(
+              <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                {payments.map(p=>{
+                  const unit=UNITS.find(u=>u.id===p.unitId), bld=unit?BUILDINGS.find(b=>b.id===unit.buildingId):null, tenant=tenants[p.unitId];
+                  return (
+                    <div key={p.id} style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:9, padding:"11px 13px" }}>
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                          <div style={{ width:30, height:30, borderRadius:7, background:"#2d6a4f44", display:"flex", alignItems:"center", justifyContent:"center", color:"#52b788", flexShrink:0 }}><Ic n="euro" s={14}/></div>
+                          <div>
+                            <div style={{ fontSize:13, fontWeight:600 }}>{tenant?.name||"Onbekend"}</div>
+                            <div style={{ fontSize:11, color:"#7a8fa6" }}>{unit?.name} · {bld?.name} · {MONTHS_NL[p.month]} {p.year}</div>
+                          </div>
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontSize:14, fontWeight:700, color:"#52b788" }}>{fmtEur(p.amount)}</div>
+                            <div style={{ fontSize:10, color:"#7a8fa6" }}>{fmtDate(p.date)}</div>
+                          </div>
+                          <button onClick={()=>openPaymentModal(null, p)} style={{ background:"none", border:"none", cursor:"pointer", color:"#c9a84c", padding:4 }} title="Bewerken">✏️</button>
+                          <button onClick={()=>deletePayment(p.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"#4a5a6a", padding:4 }}><Ic n="trash" s={14}/></button>
+                        </div>
+                      </div>
+                      {p.voorschot>0&&<div style={{ display:"flex", gap:6, marginTop:6, marginLeft:39 }}><Pill label="Huur" value={fmtEur(p.rent)} color="#4a90c8"/><Pill label="Voorschot" value={fmtEur(p.voorschot)} color="#9b72cf"/></div>}
+                      {p.note&&<div style={{ fontSize:10, color:"#4a6080", fontStyle:"italic", marginTop:4, marginLeft:39 }}>{p.note}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* INDEXATIE */}
+        {tab==="indexatie"&&(
+          <div>
+            <div style={{ background:"#1a3a5c44", border:"1px solid #4a90c844", borderRadius:10, padding:"12px 14px", marginBottom:18, fontSize:13, color:"#a0c0e0", lineHeight:1.6 }}>
+              <strong style={{ color:"#c9a84c" }}>Huurindexatie — vast bedrag</strong><br/>
+              Voer de verhogingsbedragen in, kies de maand en selecteer de eenheden. Je kan huur en voorschot apart aanpassen.
+            </div>
+            {idxDone?(
+              <div style={{ background:"#2d6a4f44", border:"1px solid #52b78844", borderRadius:12, padding:28, textAlign:"center" }}>
+                <div style={{ fontSize:36, marginBottom:10 }}>✅</div>
+                <div style={{ fontSize:16, fontWeight:700, color:"#52b788", marginBottom:6 }}>Indexatie toegepast!</div>
+                <div style={{ fontSize:13, color:"#7a8fa6", marginBottom:18 }}>Nieuwe bedragen zijn opgeslagen. Historiek is zichtbaar per eenheid.</div>
+                <button onClick={()=>{setIdxDone(false);setIdxAmt("");setIdxVoorAmt("");setIdxNote("");}} style={S.gold}>Nieuwe indexatie</button>
+              </div>
+            ):(
+              <>
+                <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, padding:16, marginBottom:14 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"#c9a84c", marginBottom:12 }}>Parameters</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                    <div>
+                      <label style={S.label}>Verhoging huur (€)</label>
+                      <input style={S.input} type="number" step="0.01" placeholder="bv. 25" value={idxAmt} onChange={e=>setIdxAmt(e.target.value)}/>
+                    </div>
+                    <div>
+                      <label style={S.label}>Verhoging voorschot (€)</label>
+                      <input style={S.input} type="number" step="0.01" placeholder="bv. 10 (optioneel)" value={idxVoorAmt} onChange={e=>setIdxVoorAmt(e.target.value)}/>
+                    </div>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                    <div>
+                      <label style={S.label}>Maand</label>
+                      <select style={S.input} value={idxMonth} onChange={e=>setIdxMonth(Number(e.target.value))}>
+                        {MONTHS_NL.map((m,i)=><option key={i} value={i}>{m}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={S.label}>Jaar</label>
+                      <select style={S.input} value={idxYear} onChange={e=>setIdxYear(Number(e.target.value))}>
+                        {[2022,2023,2024,2025,2026,2027,2028].map(y=><option key={y} value={y}>{y}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={S.label}>Notitie (optioneel)</label>
+                    <input style={S.input} placeholder={`bv. Indexatie ${MONTHS_NL[idxMonth]} ${idxYear}`} value={idxNote} onChange={e=>setIdxNote(e.target.value)}/>
+                  </div>
+                </div>
+                {occupiedUnits.length===0?(
+                  <div style={{ textAlign:"center", padding:30, color:"#4a6080", fontStyle:"italic" }}>Geen huurders gevonden.</div>
+                ):(
+                  <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, padding:16, marginBottom:14 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:"#c9a84c" }}>Eenheden</div>
+                      <div style={{ display:"flex", gap:7 }}>
+                        <button style={{...S.small,fontSize:11}} onClick={()=>{const s={};occupiedUnits.forEach(u=>{s[u.id]=true;});setIdxSel(s);}}>Alles</button>
+                        <button style={{...S.small,fontSize:11}} onClick={()=>setIdxSel({})}>Geen</button>
+                      </div>
+                    </div>
+                    {BUILDINGS.map(b=>{
+                      const units=occupiedUnits.filter(u=>u.buildingId===b.id);
+                      if(!units.length) return null;
+                      return (
+                        <div key={b.id} style={{ marginBottom:10 }}>
+                          <div style={{ fontSize:11, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6, display:"flex", alignItems:"center", gap:5 }}>
+                            <div style={{ width:6, height:6, borderRadius:"50%", background:b.id==="sn"?"#4a90c8":"#52b788" }}/>{b.name}
+                          </div>
+                          {units.map(u=>{
+                            const tenant=tenants[u.id], sel=!!idxSel[u.id];
+                            const hasChange = amt>0||voorAmt>0;
+                            const nr=previewRent(u.id), nv=previewVoor(u.id), nt=previewTotal(u.id);
+                            const diffRent=round2(nr-tenant.rent), diffVoor=round2(nv-(tenant.voorschot||0)), diffT=round2(nt-totalDue(tenant));
+                            return (
+                              <div key={u.id} onClick={()=>setIdxSel(s=>({...s,[u.id]:!sel}))} style={{ padding:"11px 12px", borderRadius:8, marginBottom:6, cursor:"pointer", background:sel?"#1e2e42":"#0f192333", border:`1px solid ${sel?"#c9a84c66":"#2a3a50"}`, transition:"all 0.15s" }}>
+                                {/* Top row: checkbox + naam + bedragen */}
+                                <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                                  <div style={{ width:18, height:18, borderRadius:4, border:`2px solid ${sel?"#c9a84c":"#4a6080"}`, background:sel?"#c9a84c22":"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                                    {sel&&<Ic n="check" s={11}/>}
+                                  </div>
+                                  <div style={{ flex:1, minWidth:0 }}>
+                                    <div style={{ fontSize:13, fontWeight:600 }}>{u.name} <span style={{ fontSize:11, color:"#7a8fa6", fontWeight:400 }}>— {tenant.name}</span></div>
+                                  </div>
+                                </div>
+                                {/* Rent breakdown table */}
+                                <div style={{ marginTop:9, marginLeft:27, display:"grid", gridTemplateColumns:"auto 1fr 1fr 1fr", gap:"4px 10px", fontSize:12, alignItems:"center" }}>
+                                  {/* Headers */}
+                                  <div></div>
+                                  <div style={{ color:"#7a8fa6", fontSize:10, textTransform:"uppercase", letterSpacing:"0.06em" }}>Huidige prijs</div>
+                                  <div style={{ color:"#7a8fa6", fontSize:10, textTransform:"uppercase", letterSpacing:"0.06em" }}>Verhoging</div>
+                                  <div style={{ color:"#7a8fa6", fontSize:10, textTransform:"uppercase", letterSpacing:"0.06em" }}>Nieuwe prijs</div>
+                                  {/* Huur row */}
+                                  <div style={{ color:"#4a90c8", fontSize:10, textTransform:"uppercase" }}>Huur</div>
+                                  <div style={{ color:"#e8e0d0", fontWeight:600 }}>{fmtEur(tenant.rent)}</div>
+                                  <div style={{ color: hasChange&&amt>0 ? "#c9a84c" : "#4a6080" }}>{hasChange&&amt>0 ? "+"+fmtEur(amt) : "—"}</div>
+                                  <div style={{ color: hasChange&&amt>0&&sel ? "#52b788" : "#e8e0d0", fontWeight: hasChange&&amt>0&&sel ? 700 : 400 }}>{hasChange&&amt>0 ? fmtEur(nr) : fmtEur(tenant.rent)}</div>
+                                  {/* Voorschot row — always show */}
+                                  <div style={{ color:"#9b72cf", fontSize:10, textTransform:"uppercase" }}>Voorschot</div>
+                                  <div style={{ color:"#e8e0d0", fontWeight:600 }}>{fmtEur(tenant.voorschot||0)}</div>
+                                  <div style={{ color: hasChange&&voorAmt>0 ? "#c9a84c" : "#4a6080" }}>{hasChange&&voorAmt>0 ? "+"+fmtEur(voorAmt) : "—"}</div>
+                                  <div style={{ color: hasChange&&voorAmt>0&&sel ? "#52b788" : "#e8e0d0", fontWeight: hasChange&&voorAmt>0&&sel ? 700 : 400 }}>{hasChange&&voorAmt>0 ? fmtEur(nv) : fmtEur(tenant.voorschot||0)}</div>
+                                  {/* Totaal row */}
+                                  <div style={{ color:"#c9a84c", fontSize:10, textTransform:"uppercase", fontWeight:700 }}>Totaal</div>
+                                  <div style={{ color:"#c9a84c", fontWeight:700 }}>{fmtEur(totalDue(tenant))}</div>
+                                  <div style={{ color: hasChange&&diffT>0 ? "#c9a84c" : "#4a6080", fontWeight:700 }}>{hasChange&&diffT>0 ? "+"+fmtEur(diffT) : "—"}</div>
+                                  <div style={{ color: hasChange&&sel ? "#52b788" : "#c9a84c", fontWeight:700 }}>{hasChange ? fmtEur(nt) : fmtEur(totalDue(tenant))}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {(amt>0||voorAmt>0)&&Object.values(idxSel).some(Boolean)&&(()=>{
+                  const sel=UNITS.filter(u=>idxSel[u.id]&&tenants[u.id]);
+                  const oldTotal=sel.reduce((s,u)=>s+totalDue(tenants[u.id]),0);
+                  const newTotal=sel.reduce((s,u)=>s+previewTotal(u.id),0);
+                  return (
+                    <div style={{ background:"#2d6a4f22", border:"1px solid #52b78844", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+                      <div style={{ fontSize:11, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>Samenvatting</div>
+                      <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
+                        {[["Eenheden",sel.length,"#e8e0d0"],["Oud/mnd",fmtEur(oldTotal),"#e07a40"],["Nieuw/mnd",fmtEur(newTotal),"#52b788"],["Winst/jaar",fmtEur((newTotal-oldTotal)*12),"#c9a84c"]].map(([lbl,val,col])=>(
+                          <div key={lbl}><div style={{ fontSize:10, color:"#7a8fa6" }}>{lbl}</div><div style={{ fontSize:15, fontWeight:700, color:col }}>{val}</div></div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <button onClick={applyIndexation} disabled={(!amt&&!voorAmt)||!Object.values(idxSel).some(Boolean)} style={{ ...S.gold, opacity:((!amt&&!voorAmt)||!Object.values(idxSel).some(Boolean))?0.4:1, fontSize:14, padding:"11px 20px" }}>
+                  <Ic n="trend" s={15}/> Indexatie toepassen
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* RAPPORTEN */}
+        {tab==="rapporten"&&(()=>{
+
+          // Helper: get the rent that was applicable for a given month/year based on rentHistory
+          // Parse any date string to a local Date object (avoids UTC timezone shift)
+          const parseDate = (str) => {
+            if (!str) return new Date(0);
+            // DD-MM-YYYY
+            if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+              const [d,m,y] = str.split('-').map(Number);
+              return new Date(y, m-1, d);
+            }
+            // DD/MM/YYYY
+            if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+              const [d,m,y] = str.split('/').map(Number);
+              return new Date(y, m-1, d);
+            }
+            // YYYY-MM-DD
+            if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+              const [y,m,d] = str.split('-').map(Number);
+              return new Date(y, m-1, d);
+            }
+            // YYYY-MM-DD with time
+            if (str.includes('T')) {
+              const [datePart] = str.split('T');
+              const [y,m,d] = datePart.split('-').map(Number);
+              return new Date(y, m-1, d);
+            }
+            return new Date(str);
+          };
+
+          const getRentForMonth = (t, month, year) => {
+            if (!t) return { rent:0, voorschot:0 };
+            const history = t.rentHistory || [];
+            if (history.length === 0) return { rent: t.rent||0, voorschot: t.voorschot||0 };
+            // Sort history ascending by date (all parsed as local time)
+            const sorted = [...history].sort((a,b) => parseDate(a.date) - parseDate(b.date));
+            // Target = first day of given month (local time)
+            const target = new Date(year, month, 1);
+            // Find last history entry whose date <= target
+            let applicable = sorted[0];
+            for (const h of sorted) {
+              if (parseDate(h.date) <= target) applicable = h;
+            }
+            return applicable ? { rent: applicable.rent||0, voorschot: applicable.voorschot||0 } : { rent: t.rent||0, voorschot: t.voorschot||0 };
+          };
+
+          const now = new Date();
+
+          // ── HUURDER RAPPORT ──────────────────────────────────────────────
+          const rUnit  = rapportUnit && tenants[rapportUnit] ? rapportUnit : (occupiedUnits[0]?.id||"");
+          const tenant = tenants[rUnit];
+          const unit   = UNITS.find(u=>u.id===rUnit);
+          const bld    = unit ? BUILDINGS.find(b=>b.id===unit.buildingId) : null;
+          const maxMonthH = rapportYear < now.getFullYear() ? 11 : rapportYear > now.getFullYear() ? -1 : now.getMonth();
+
+          // Get tenant start date from first rentHistory entry
+          const getTenantStartDate = (t) => {
+            if (!t) return null;
+            const history = t.rentHistory || [];
+            if (history.length === 0) return null;
+            const sorted = [...history].sort((a,b) => parseDate(a.date) - parseDate(b.date));
+            return parseDate(sorted[0].date);
+          };
+          const tenantStart = getTenantStartDate(tenant);
+
+          // Check if a month/year is before tenant started
+          const isBeforeTenant = (m, y) => {
+            if (!tenantStart) return false;
+            const monthDate = new Date(y, m, 1);
+            return monthDate < new Date(tenantStart.getFullYear(), tenantStart.getMonth(), 1);
+          };
+
+          // Build list of months to show based on mode
+          const periodMonths = (() => {
+            if (rapportMode === "jaar") {
+              return MONTHS_NL.map((_,m) => ({ month:m, year:rapportYear }))
+                .filter(({month:m, year:y}) => !isBeforeTenant(m, y));
+            } else {
+              const months = [];
+              let y = rapportFromY, m = rapportFromM;
+              while (y < rapportToY || (y === rapportToY && m <= rapportToM)) {
+                if (!isBeforeTenant(m, y)) months.push({ month:m, year:y });
+                m++; if (m > 11) { m=0; y++; }
+                if (months.length > 60) break; // max 5 years
+              }
+              return months;
+            }
+          })();
+
+          const isMonthFuture = (m, y) => {
+            if (y > now.getFullYear()) return true;
+            if (y === now.getFullYear() && m > now.getMonth()) return true;
+            return false;
+          };
+
+          const monthData = periodMonths.map(({month:m, year:y})=>{
+            // Support multiple payments per month — strictly filter by month AND year
+            // Deduplicate by id to avoid Firebase double-load issues
+            const seen = new Set();
+            const monthPayments = payments.filter(x=>{
+              if (
+                x.unitId===rUnit &&
+                Number(x.month)===Number(m) &&
+                Number(x.year)===Number(y)
+              ) {
+                if (seen.has(x.id)) return false;
+                seen.add(x.id);
+                return true;
+              }
+              return false;
+            });
+            const applicable = getRentForMonth(tenant, m, y);
+            const expectedAmt = applicable.rent + applicable.voorschot;
+            if (monthPayments.length === 0) {
+              return { paid:false, month:m, year:y, expected:expectedAmt, expRent:applicable.rent, expVoor:applicable.voorschot, allPayments:[] };
+            }
+            const totalPaid = monthPayments.reduce((s,p)=>s+p.amount,0);
+            const totalRent = monthPayments.reduce((s,p)=>s+(p.rent||p.amount),0);
+            const totalVoor = monthPayments.reduce((s,p)=>s+(p.voorschot||0),0);
+            return {
+              paid:true, month:m, year:y,
+              amount:totalPaid, rent:totalRent, voorschot:totalVoor,
+              date:monthPayments[0].date,
+              note:monthPayments.map(p=>p.note).filter(Boolean).join(', '),
+              expected:expectedAmt, expRent:applicable.rent, expVoor:applicable.voorschot,
+              allPayments:monthPayments
+            };
+          });
+
+          const totalExpected = tenant ? monthData.filter(d=>!isMonthFuture(d.month,d.year)).reduce((s,d)=>s+d.expected,0) : 0;
+          const totalReceived = monthData.reduce((s,d)=>s+(d.paid?d.amount:0),0);
+          const outstanding   = Math.max(0, totalExpected - totalReceived);
+          const overpaid      = Math.max(0, totalReceived - totalExpected);
+
+          const printHuurderRapport = () => {
+            const w = window.open('','_blank');
+            const rows = monthData.map((d,i)=>{
+              const mn = rapportMode==="periode" ? MONTHS_NL[d.month]+" "+d.year : MONTHS_NL[d.month];
+              const future = isMonthFuture(d.month, d.year);
+              const runningBal = monthData.slice(0,i+1).filter(x=>!isMonthFuture(x.month,x.year)).reduce((s,x)=>s+(x.paid?x.amount:0)-(isMonthFuture(x.month,x.year)?0:x.expected),0);
+              const diff = d.paid ? round2(d.amount - d.expected) : 0;
+              const diffStr = diff===0 ? '' : diff>0 ? `<span style="color:#9b72cf">+€ ${diff.toFixed(2).replace('.',',')}</span>` : `<span style="color:#c0392b">-€ ${Math.abs(diff).toFixed(2).replace('.',',')}</span>`;
+              const statusBg = future?'#888':d.paid?(diff<0?'#e67e22':'#2d6a4f'):'#8b3a1a';
+              const statusTxt = future?'Toekomstig':d.paid?(diff<0?'Deels betaald':'Betaald'):'Niet betaald';
+              const multiPayInfo = d.allPayments&&d.allPayments.length>1
+                ? '<br><small style="color:#666">'+d.allPayments.map(p=>'€ '+p.amount.toFixed(2).replace('.',',')+' ('+p.date+(p.note?' – '+p.note:'')+')').join('<br>')+'</small>'
+                : '';
+              const dateInfo = d.paid && d.allPayments
+                ? d.allPayments.length === 1
+                  ? fmtDate(d.allPayments[0].date)
+                  : d.allPayments.map(p=>fmtDate(p.date)+(p.note?' ('+p.note+')':'')).join('<br>')
+                : future ? '—' : '—';
+              return `<tr style="border-bottom:1px solid #eee;${d.paid&&diff<0?'background:#fff8f0':''}">
+                <td style="padding:7px 10px;font-weight:600">${mn}</td>
+                <td style="padding:5px 8px"><span style="background:${statusBg};color:white;padding:3px 8px;border-radius:4px;font-size:12px">${statusTxt}</span></td>
+                <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1a3a5c">€ ${d.expected.toFixed(2).replace('.',',')}</td>
+                <td style="padding:7px 10px;text-align:right;color:#1a5c9c">${d.paid?'€ '+d.rent.toFixed(2).replace('.',','):'—'}</td>
+                <td style="padding:7px 10px;text-align:right;color:#6a3a9c">${d.paid&&d.voorschot>0?'€ '+d.voorschot.toFixed(2).replace('.',','):'—'}</td>
+                <td style="padding:7px 10px;text-align:right;color:#2d6a4f;font-weight:700">${d.paid?'€ '+d.amount.toFixed(2).replace('.',',')+multiPayInfo:future?'—':'—'}</td>
+                <td style="padding:7px 10px;color:#888;font-size:12px">${dateInfo}</td>
+                <td style="padding:7px 10px;text-align:center">${diffStr||'✓'}</td>
+                <td style="padding:7px 10px;text-align:right;font-weight:700;color:${runningBal<0?'#c0392b':runningBal>0?'#8e44ad':'#2d6a4f'}">${future?'—':runningBal===0?'✓':'€ '+Math.abs(runningBal).toFixed(2).replace('.',',')+(runningBal<0?' schuld':' credit')}</td>
+              </tr>`;
+            }).join('');
+            w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport ${tenant?.name||''} ${rapportYear}</title>
+            <style>body{font-family:Georgia,serif;padding:30px;color:#222}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1a2940;color:white;padding:8px 10px;text-align:left;font-size:12px}td{vertical-align:middle}.summary{display:flex;gap:16px;margin:16px 0;flex-wrap:wrap}.box{border:1px solid #ddd;border-radius:8px;padding:10px 16px;min-width:130px}.box .lbl{font-size:10px;color:#888;text-transform:uppercase}.box .val{font-size:18px;font-weight:700;margin-top:3px}h2{color:#1a2940}@media print{body{padding:15px}}</style>
+            </head><body>
+            <h2 style="margin-bottom:2px">Betalingsrapport ${rapportYear}</h2>
+            <p style="color:#666;margin-bottom:4px;font-size:14px">${tenant?.name||''}</p>
+            <p style="color:#888;margin-bottom:14px;font-size:12px">${unit?.name||''} · ${bld?.name||''}</p>
+            <div class="summary">
+              <div class="box"><div class="lbl">Verwacht ${rapportYear}</div><div class="val" style="color:#1a3a5c">€ ${totalExpected.toFixed(2).replace('.',',')}</div></div>
+              <div class="box"><div class="lbl">Ontvangen</div><div class="val" style="color:#2d6a4f">€ ${totalReceived.toFixed(2).replace('.',',')}</div></div>
+              <div class="box"><div class="lbl">Openstaand</div><div class="val" style="color:${outstanding>0?'#c0392b':'#2d6a4f'}">€ ${outstanding.toFixed(2).replace('.',',')}</div></div>
+              ${overpaid>0?`<div class="box"><div class="lbl">Te veel betaald</div><div class="val" style="color:#8e44ad">€ ${overpaid.toFixed(2).replace('.',',')}</div></div>`:''}
+            </div>
+            <table><thead><tr><th>Maand</th><th>Status</th><th>Verwacht</th><th>Huur betaald</th><th>Voorschot betaald</th><th>Totaal betaald</th><th>Datum</th><th>Verschil</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody>
+            <tfoot><tr style="background:#f5f5f5;font-weight:700"><td colspan="4" style="padding:8px 10px">TOTAAL</td><td style="padding:8px 10px;text-align:right">€ ${totalExpected.toFixed(2).replace('.',',')}</td><td style="padding:8px 10px;text-align:right;color:#2d6a4f">€ ${totalReceived.toFixed(2).replace('.',',')}</td><td style="padding:8px 10px;text-align:center;color:${outstanding>0?'#c0392b':'#2d6a4f'}">${outstanding>0?'-€ '+outstanding.toFixed(2).replace('.',','):overpaid>0?'+€ '+overpaid.toFixed(2).replace('.',','):'✓'}</td><td></td></tr></tfoot>
+            </table>
+            <p style="margin-top:16px;font-size:10px;color:#aaa">Gegenereerd op ${new Date().toLocaleDateString('nl-BE')} via Huurportaal</p>
+            </body></html>`);
+            w.document.close();
+            setTimeout(()=>w.print(),400);
+          };
+
+          // ── MAAND RAPPORT ────────────────────────────────────────────────
+          const maxMonthM = rapportYear < now.getFullYear() ? 11 : rapportYear > now.getFullYear() ? -1 : now.getMonth();
+          const isFutureMonth = rapportMonth > maxMonthM && rapportYear >= now.getFullYear();
+
+          const maandData = occupiedUnits.map(u=>{
+            const t = tenants[u.id];
+            const unt = UNITS.find(x=>x.id===u.id);
+            const b   = unt ? BUILDINGS.find(x=>x.id===unt.buildingId) : null;
+            const applicable = getRentForMonth(t, rapportMonth, rapportYear);
+            const expectedAmt = applicable.rent + applicable.voorschot;
+            const monthPs = payments.filter(x=>x.unitId===u.id&&x.month===rapportMonth&&x.year===rapportYear);
+            const totalPaidM = monthPs.reduce((s,p)=>s+p.amount,0);
+            const outstanding = Math.max(0, expectedAmt - totalPaidM);
+            return { uid:u.id, name:t.name, unitName:unt?.name, bldName:b?.name, expected:expectedAmt, expRent:applicable.rent, expVoor:applicable.voorschot, paid:monthPs.length>0, amount:totalPaidM, rent:monthPs.reduce((s,p)=>s+(p.rent||0),0), voorschot:monthPs.reduce((s,p)=>s+(p.voorschot||0),0), date:monthPs[0]?.date||'', note:monthPs.map(p=>p.note).filter(Boolean).join(', ')||'', outstanding, multiPay:monthPs.length>1 };
+          });
+          const maandExpected = maandData.reduce((s,d)=>s+d.expected,0);
+          const maandReceived = maandData.reduce((s,d)=>s+(d.paid?d.amount:0),0);
+          const maandOutstanding = Math.max(0, maandExpected - maandReceived);
+
+          const printMaandRapport = () => {
+            const w = window.open('','_blank');
+            const rows = maandData.map(d=>{
+              const diff = d.paid ? round2(d.amount - d.expected) : 0;
+              const statusBg = d.paid?(diff<0?'#e67e22':'#2d6a4f'):'#8b3a1a';
+              const statusTxt = d.paid?(diff<0?'Deels':'Betaald'):'Niet betaald';
+              const diffStr = diff===0?'✓':diff>0?`+€ ${diff.toFixed(2).replace('.',',')}`:'-€ '+Math.abs(diff).toFixed(2).replace('.',',');
+              return `<tr style="border-bottom:1px solid #eee">
+                <td style="padding:7px 10px;font-weight:600">${d.unitName}</td>
+                <td style="padding:7px 10px;color:#555">${d.name}</td>
+                <td style="padding:7px 10px;color:#555">${d.bldName}</td>
+                <td style="padding:5px 8px"><span style="background:${statusBg};color:white;padding:3px 8px;border-radius:4px;font-size:12px">${statusTxt}</span></td>
+                <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1a3a5c">€ ${d.expected.toFixed(2).replace('.',',')}</td>
+                <td style="padding:7px 10px;text-align:right;color:#2d6a4f;font-weight:700">${d.paid?'€ '+d.amount.toFixed(2).replace('.',','):'—'}</td>
+                <td style="padding:7px 10px;text-align:center;color:${diff<0?'#c0392b':diff>0?'#8e44ad':'#2d6a4f'}">${diffStr}</td>
+                <td style="padding:7px 10px;color:#888;font-size:12px">${fmtDate(d.date)}</td>
+              </tr>`;
+            }).join('');
+            w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Maandrapport ${MONTHS_NL[rapportMonth]} ${rapportYear}</title>
+            <style>body{font-family:Georgia,serif;padding:30px;color:#222}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1a2940;color:white;padding:8px 10px;text-align:left;font-size:12px}td{vertical-align:middle}.summary{display:flex;gap:16px;margin:16px 0;flex-wrap:wrap}.box{border:1px solid #ddd;border-radius:8px;padding:10px 16px;min-width:130px}.box .lbl{font-size:10px;color:#888;text-transform:uppercase}.box .val{font-size:18px;font-weight:700;margin-top:3px}</style>
+            </head><body>
+            <h2 style="margin-bottom:4px;color:#1a2940">Maandrapport — ${MONTHS_NL[rapportMonth]} ${rapportYear}</h2>
+            <p style="color:#888;margin-bottom:14px;font-size:12px">Alle eenheden</p>
+            <div class="summary">
+              <div class="box"><div class="lbl">Verwacht</div><div class="val" style="color:#1a3a5c">€ ${maandExpected.toFixed(2).replace('.',',')}</div></div>
+              <div class="box"><div class="lbl">Ontvangen</div><div class="val" style="color:#2d6a4f">€ ${maandReceived.toFixed(2).replace('.',',')}</div></div>
+              <div class="box"><div class="lbl">Openstaand</div><div class="val" style="color:${maandOutstanding>0?'#c0392b':'#2d6a4f'}">€ ${maandOutstanding.toFixed(2).replace('.',',')}</div></div>
+              <div class="box"><div class="lbl">Betaald</div><div class="val" style="color:#2d6a4f">${maandData.filter(d=>d.paid).length}/${maandData.length}</div></div>
+            </div>
+            <table><thead><tr><th>Eenheid</th><th>Huurder</th><th>Gebouw</th><th>Status</th><th>Verwacht</th><th>Betaald</th><th>Verschil</th><th>Datum</th></tr></thead><tbody>${rows}</tbody>
+            <tfoot><tr style="background:#f5f5f5;font-weight:700"><td colspan="4" style="padding:8px 10px">TOTAAL</td><td style="padding:8px 10px;text-align:right">€ ${maandExpected.toFixed(2).replace('.',',')}</td><td style="padding:8px 10px;text-align:right;color:#2d6a4f">€ ${maandReceived.toFixed(2).replace('.',',')}</td><td style="padding:8px 10px;text-align:center;color:${maandOutstanding>0?'#c0392b':'#2d6a4f'}">${maandOutstanding>0?'Nog € '+maandOutstanding.toFixed(2).replace('.',','):'✓ Volledig'}</td><td></td></tr></tfoot>
+            </table>
+            <p style="margin-top:16px;font-size:10px;color:#aaa">Gegenereerd op ${new Date().toLocaleDateString('nl-BE')} via Huurportaal</p>
+            </body></html>`);
+            w.document.close();
+            setTimeout(()=>w.print(),400);
+          };
+
+          // ── EXCEL EXPORTS ─────────────────────────────────────────────────
+          const exportHuurderExcel = () => {
+            if (!tenant) return;
+            const wb = XLSX.utils.book_new();
+            // Info sheet
+            const infoData = [
+              ["Betalingsrapport", rapportYear],
+              ["Huurder", tenant.name],
+              ["Eenheid", unit?.name],
+              ["Gebouw", bld?.name],
+              ["Huidige huur", tenant.rent],
+              ["Huidig voorschot", tenant.voorschot||0],
+              ["Huidig totaal/mnd", totalDue(tenant)],
+              [],
+              ["Verwacht "+rapportYear, totalExpected],
+              ["Ontvangen", totalReceived],
+              ["Openstaand", outstanding],
+              overpaid>0?["Te veel betaald", overpaid]:[],
+            ].filter(r=>r.length>0);
+            const wsInfo = XLSX.utils.aoa_to_sheet(infoData);
+            wsInfo['!cols'] = [{wch:25},{wch:20}];
+            XLSX.utils.book_append_sheet(wb, wsInfo, "Info");
+
+            // Betalingen sheet
+            const headers = ["Maand","Status","Huur verschuldigd","Voorschot verschuldigd","Totaal verwacht","Huur betaald","Voorschot betaald","Totaal betaald","Verschil","Datum","Notitie"];
+            const rows = monthData.map((d,i)=>{
+              const mn = rapportMode==="periode" ? MONTHS_NL[d.month]+" "+d.year : MONTHS_NL[d.month];
+              const future = isMonthFuture(d.month, d.year);
+              const runningBal = monthData.slice(0,i+1).filter(x=>!isMonthFuture(x.month,x.year)).reduce((s,x)=>s+(x.paid?x.amount:0)-(isMonthFuture(x.month,x.year)?0:x.expected),0);
+              const diff = d.paid ? round2(d.amount - d.expected) : null;
+              const status = future?"Toekomstig":d.paid?(diff<0?"Deels betaald":"Betaald"):"Niet betaald";
+              return [
+                mn, status,
+                d.expRent, d.expVoor, d.expected,
+                d.paid?(d.rent||d.amount):null,
+                d.paid?d.voorschot:null,
+                d.paid?d.amount:null,
+                diff,
+                d.paid?fmtDate(d.date):"",
+                d.note||""
+              ];
+            });
+            const totaalRow = ["TOTAAL","",
+              monthData.slice(0,maxMonthH+1).reduce((s,d)=>s+d.expRent,0),
+              monthData.slice(0,maxMonthH+1).reduce((s,d)=>s+d.expVoor,0),
+              totalExpected,
+              monthData.reduce((s,d)=>s+(d.paid?(d.rent||d.amount):0),0),
+              monthData.reduce((s,d)=>s+(d.paid?d.voorschot:0),0),
+              totalReceived,
+              round2(totalReceived-totalExpected),
+              "",""];
+            const wsData = [headers, ...rows, [], totaalRow];
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            ws['!cols'] = [{wch:12},{wch:16},{wch:18},{wch:20},{wch:16},{wch:14},{wch:18},{wch:14},{wch:10},{wch:12},{wch:20}];
+            XLSX.utils.book_append_sheet(wb, ws, "Betalingen");
+
+            XLSX.writeFile(wb, "Rapport_"+tenant.name.replace(/ /g,"_")+"_"+rapportYear+".xlsx");
+          };
+
+          const exportMaandExcel = () => {
+            const wb = XLSX.utils.book_new();
+            const headers = ["Eenheid","Huurder","Gebouw","Status","Huur verschuldigd","Voorschot verschuldigd","Totaal verwacht","Huur betaald","Voorschot betaald","Totaal betaald","Verschil","Datum","Notitie"];
+            const rows = maandData.map(d=>{
+              const diff = d.paid ? round2(d.amount - d.expected) : null;
+              const status = d.paid?(diff<0?"Deels betaald":"Betaald"):"Niet betaald";
+              return [d.unitName, d.name, d.bldName, status, d.expRent, d.expVoor, d.expected, d.paid?d.rent:null, d.paid?d.voorschot:null, d.paid?d.amount:null, diff, d.paid?fmtDate(d.date):"", d.note||""];
+            });
+            const totaalRow = ["TOTAAL","","","",
+              maandData.reduce((s,d)=>s+d.expRent,0),
+              maandData.reduce((s,d)=>s+d.expVoor,0),
+              maandExpected,
+              maandData.reduce((s,d)=>s+(d.paid?d.rent:0),0),
+              maandData.reduce((s,d)=>s+(d.paid?d.voorschot:0),0),
+              maandReceived,
+              round2(maandReceived-maandExpected),
+              "",""];
+            const wsData = [headers, ...rows, [], totaalRow];
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            ws['!cols'] = [{wch:16},{wch:20},{wch:14},{wch:16},{wch:18},{wch:20},{wch:16},{wch:14},{wch:18},{wch:14},{wch:10},{wch:12},{wch:20}];
+            XLSX.utils.book_append_sheet(wb, ws, MONTHS_NL[rapportMonth]+" "+rapportYear);
+            XLSX.writeFile(wb, "Maandrapport_"+MONTHS_NL[rapportMonth]+"_"+rapportYear+".xlsx");
+          };
+
+          // ── RENDER ────────────────────────────────────────────────────────
+          return (
+            <div>
+              {/* Type tabs */}
+              <div style={{ display:"flex", gap:6, marginBottom:18 }}>
+                {[["huurder","👤 Per huurder"],["maand","📅 Per maand"]].map(([t,lbl])=>(
+                  <button key={t} onClick={()=>setRapportType(t)} style={{ flex:1, padding:"10px", borderRadius:8, border:`1px solid ${rapportType===t?"#c9a84c44":"#2a3a50"}`, background:rapportType===t?"#1e2e42":"#1a2940", color:rapportType===t?"#c9a84c":"#7a8fa6", fontFamily:"inherit", fontSize:13, fontWeight:rapportType===t?700:400, cursor:"pointer" }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── PER HUURDER ── */}
+              {rapportType==="huurder" && (
+                <div>
+                  {/* Huurder selector */}
+                  <div style={{ display:"flex", gap:8, marginBottom:10, flexWrap:"wrap" }}>
+                    <select value={rUnit} onChange={e=>setRapportUnit(e.target.value)} style={{...S.select,flex:1,minWidth:160}}>
+                      {BUILDINGS.map(b=>(
+                        <optgroup key={b.id} label={b.name}>
+                          {UNITS.filter(u=>u.buildingId===b.id&&tenants[u.id]).map(u=>(
+                            <option key={u.id} value={u.id}>{u.name} – {tenants[u.id].name}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Mode toggle */}
+                  <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+                    {[["jaar","📅 Per jaar"],["periode","📆 Periode"]].map(([m,lbl])=>(
+                      <button key={m} onClick={()=>setRapportMode(m)} style={{ flex:1, padding:"7px", borderRadius:7, border:`1px solid ${rapportMode===m?"#c9a84c44":"#2a3a50"}`, background:rapportMode===m?"#1e2e42":"#1a2940", color:rapportMode===m?"#c9a84c":"#7a8fa6", fontFamily:"inherit", fontSize:12, fontWeight:rapportMode===m?700:400, cursor:"pointer" }}>
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Year or period selector */}
+                  {rapportMode==="jaar" ? (
+                    <div style={{ display:"flex", gap:8, marginBottom:10, flexWrap:"wrap" }}>
+                      <select value={rapportYear} onChange={e=>setRapportYear(Number(e.target.value))} style={{...S.select,flex:1}}>
+                        {[2021,2022,2023,2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                      </select>
+                      <button onClick={printHuurderRapport} style={S.gold} disabled={!tenant}>🖨️ Afdrukken</button>
+                      <button onClick={exportHuurderExcel} style={{...S.gold, background:"linear-gradient(135deg,#217346,#2ecc71)"}} disabled={!tenant}>📊 Excel</button>
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom:10 }}>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+                        <div>
+                          <label style={S.label}>Van</label>
+                          <div style={{ display:"flex", gap:6 }}>
+                            <select value={rapportFromM} onChange={e=>setRapportFromM(Number(e.target.value))} style={{...S.select,flex:1}}>
+                              {MONTHS_NL.map((m,i)=><option key={i} value={i}>{m}</option>)}
+                            </select>
+                            <select value={rapportFromY} onChange={e=>setRapportFromY(Number(e.target.value))} style={S.select}>
+                              {[2021,2022,2023,2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label style={S.label}>Tot en met</label>
+                          <div style={{ display:"flex", gap:6 }}>
+                            <select value={rapportToM} onChange={e=>setRapportToM(Number(e.target.value))} style={{...S.select,flex:1}}>
+                              {MONTHS_NL.map((m,i)=><option key={i} value={i}>{m}</option>)}
+                            </select>
+                            <select value={rapportToY} onChange={e=>setRapportToY(Number(e.target.value))} style={S.select}>
+                              {[2021,2022,2023,2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", gap:8 }}>
+                        <button onClick={printHuurderRapport} style={S.gold} disabled={!tenant}>🖨️ Afdrukken</button>
+                        <button onClick={exportHuurderExcel} style={{...S.gold, background:"linear-gradient(135deg,#217346,#2ecc71)"}} disabled={!tenant}>📊 Excel</button>
+                      </div>
+                    </div>
+                  )}
+                  {!tenant ? (
+                    <div style={{ textAlign:"center", padding:40, color:"#4a6080", fontStyle:"italic" }}>Geen huurders. Voeg eerst huurders toe.</div>
+                  ) : (
+                    <>
+                      {/* Tenant info */}
+                      <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, padding:"12px 14px", marginBottom:12 }}>
+                        <div style={{ fontSize:15, fontWeight:700, marginBottom:2 }}>{tenant.name}</div>
+                        <div style={{ fontSize:12, color:"#7a8fa6", marginBottom:8 }}>{unit?.name} · {bld?.name}</div>
+                        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                          <Pill label="Huur huidig" value={fmtEur(tenant.rent)} color="#4a90c8"/>
+                          {tenant.voorschot>0 && <Pill label="Voorschot huidig" value={fmtEur(tenant.voorschot)} color="#9b72cf"/>}
+                        </div>
+                      </div>
+                      {/* Summary */}
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:12 }}>
+                        {[
+                          [fmtEur(totalExpected),"Verwacht "+rapportYear,"#1a3a5c","#4a90c8"],
+                          [fmtEur(totalReceived),"Ontvangen","#2d6a4f","#52b788"],
+                          [fmtEur(outstanding), outstanding>0?"Openstaand":"Geen achterstand", outstanding>0?"#5c2d1a":"#2d6a4f", outstanding>0?"#e07a40":"#52b788"],
+                        ].map(([val,lbl,bg,acc])=>(
+                          <div key={lbl} style={{ background:`${bg}33`, border:`1px solid ${acc}44`, borderRadius:10, padding:"10px 10px" }}>
+                            <div style={{ fontSize:10, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:2 }}>{lbl}</div>
+                            <div style={{ fontSize:15, fontWeight:700, color:acc }}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {overpaid>0&&<div style={{ background:"#9b72cf22", border:"1px solid #9b72cf44", borderRadius:8, padding:"8px 12px", marginBottom:12, fontSize:13, color:"#9b72cf" }}>💜 Te veel betaald: <strong>{fmtEur(overpaid)}</strong></div>}
+                      {/* Monthly rows */}
+                      <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, overflow:"hidden" }}>
+                        <div style={{ display:"grid", gridTemplateColumns:"100px 1fr 90px 90px 90px 80px", padding:"8px 14px", borderBottom:"1px solid #2a3a50", fontSize:10, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em" }}>
+                          <div>Maand</div><div>Status</div><div style={{textAlign:"right"}}>Verwacht</div><div style={{textAlign:"right",color:"#4a90c8"}}>Huur</div><div style={{textAlign:"right",color:"#9b72cf"}}>Voorschot</div><div style={{textAlign:"right"}}>Saldo</div>
+                        </div>
+                        {monthData.map((d,i)=>{
+                          const future = isMonthFuture(d.month, d.year);
+                          const diff = d.paid ? round2(d.amount - d.expected) : 0;
+                          const runningBalance = monthData.slice(0,i+1).filter(x=>!isMonthFuture(x.month,x.year)).reduce((s,x)=>s+(x.paid?x.amount:0)-(isMonthFuture(x.month,x.year)?0:x.expected),0);
+                          const mnLabel = rapportMode==="periode" ? MONTHS_NL[d.month]+" "+d.year : MONTHS_NL[d.month];
+                          return (
+                            <div key={i} style={{ display:"grid", gridTemplateColumns:"100px 1fr 90px 90px 90px 80px", alignItems:"center", padding:"10px 14px", borderBottom:i<monthData.length-1?"1px solid #141f2e":"none", background:d.paid?"#2d6a4f18":future?"transparent":"#5c2d1a18" }}>
+                              <div style={{ fontSize:13, fontWeight:600, color:future?"#4a6080":d.paid?"#52b788":"#e07a40" }}>{mnLabel}</div>
+                              <div>
+                                {future ? <span style={{ fontSize:11, color:"#4a6080", fontStyle:"italic" }}>Toekomstig</span>
+                                : d.paid ? <div>
+                                    <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                                      <span style={{ fontSize:11, background:diff<0?"#e67e2244":"#2d6a4f44", color:diff<0?"#e07a40":"#52b788", borderRadius:4, padding:"2px 6px" }}>{diff<0?"Deels betaald":"Betaald ✓"}</span>
+                                      {diff!==0&&<span style={{ fontSize:11, color:diff>0?"#9b72cf":"#e07a40" }}>{diff>0?"+":""}{fmtEur(diff)}</span>}
+                                    </div>
+                                    {d.allPayments&&d.allPayments.map((p,pi)=>(
+                                      <div key={pi} style={{ display:"flex", gap:6, alignItems:"center", marginTop:2 }}>
+                                        {d.allPayments.length>1&&<span style={{ fontSize:11, color:"#52b788", fontWeight:600 }}>{fmtEur(p.amount)}</span>}
+                                        <span style={{ fontSize:11, color:"#4a90c8" }}>📅 {fmtDate(p.date)}</span>
+                                        {p.note&&<span style={{ fontSize:10, color:"#4a6080", fontStyle:"italic" }}>— {p.note}</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                : <span style={{ fontSize:11, background:"#5c2d1a44", color:"#e07a40", borderRadius:4, padding:"2px 6px" }}>Niet betaald</span>}
+                              </div>
+                              <div style={{ textAlign:"right", fontSize:12, color:"#7a8fa6" }}>{fmtEur(d.expected)}</div>
+                              <div style={{ textAlign:"right", fontSize:12, fontWeight:600, color:d.paid?"#4a90c8":"#4a6080" }}>{d.paid?fmtEur(d.rent):"—"}</div>
+                              <div style={{ textAlign:"right", fontSize:12, fontWeight:600, color:d.paid&&d.voorschot>0?"#9b72cf":"#4a6080" }}>{d.paid&&d.voorschot>0?fmtEur(d.voorschot):"—"}</div>
+                              <div style={{ textAlign:"right", fontSize:12, fontWeight:600, color:runningBalance<0?"#e07a40":runningBalance>0?"#9b72cf":"#52b788" }}>{runningBalance===0?"✓":fmtEur(runningBalance)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* ── PER MAAND ── */}
+              {rapportType==="maand" && (
+                <div>
+                  <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+                    <select value={rapportMonth} onChange={e=>setRapportMonth(Number(e.target.value))} style={{...S.select,flex:1}}>
+                      {MONTHS_NL.map((m,i)=><option key={i} value={i}>{m}</option>)}
+                    </select>
+                    <select value={rapportYear} onChange={e=>setRapportYear(Number(e.target.value))} style={S.select}>
+                      {[2021,2022,2023,2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <button onClick={printMaandRapport} style={S.gold}>🖨️ Afdrukken</button>
+                    <button onClick={exportMaandExcel} style={{...S.gold, background:"linear-gradient(135deg,#217346,#2ecc71)"}}>📊 Excel</button>
+                  </div>
+                  {/* Summary */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                    {[
+                      [fmtEur(maandExpected),"Verwacht","#1a3a5c","#4a90c8"],
+                      [fmtEur(maandReceived),"Ontvangen","#2d6a4f","#52b788"],
+                      [fmtEur(maandOutstanding),maandOutstanding>0?"Openstaand":"Volledig","#5c2d1a","#e07a40"],
+                      [maandData.filter(d=>d.paid).length+"/"+maandData.length,"Betaald","#1a3a1a","#52b788"],
+                    ].map(([val,lbl,bg,acc])=>(
+                      <div key={lbl} style={{ background:`${bg}33`, border:`1px solid ${acc}44`, borderRadius:10, padding:"10px 8px" }}>
+                        <div style={{ fontSize:9, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:2 }}>{lbl}</div>
+                        <div style={{ fontSize:14, fontWeight:700, color:acc }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Unit rows */}
+                  <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, overflow:"hidden" }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 80px 90px 80px", padding:"8px 14px", borderBottom:"1px solid #2a3a50", fontSize:10, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em" }}>
+                      <div>Eenheid / Huurder</div><div style={{textAlign:"right"}}>Verwacht</div><div style={{textAlign:"right"}}>Betaald</div><div style={{textAlign:"right"}}>Datum</div>
+                    </div>
+                    {maandData.map((d,i)=>{
+                      const diff = d.paid ? round2(d.amount - d.expected) : 0;
+                      return (
+                        <div key={d.uid} style={{ display:"grid", gridTemplateColumns:"1fr 80px 90px 80px", alignItems:"center", padding:"10px 14px", borderBottom:i<maandData.length-1?"1px solid #141f2e":"none", background:d.paid?"#2d6a4f18":isFutureMonth?"transparent":"#5c2d1a18" }}>
+                          <div>
+                            <div style={{ fontSize:13, fontWeight:600 }}>{d.unitName} <span style={{ fontSize:11, color:"#7a8fa6", fontWeight:400 }}>· {d.bldName}</span></div>
+                            <div style={{ fontSize:11, color:"#7a8fa6", marginTop:2 }}>{d.name}</div>
+                            {d.paid&&<div style={{ marginTop:3 }}>
+                              <span style={{ fontSize:11, background:diff<0?"#e67e2244":"#2d6a4f44", color:diff<0?"#e07a40":"#52b788", borderRadius:4, padding:"1px 5px" }}>{diff<0?"Deels":"Betaald ✓"}</span>
+                              {diff!==0&&<span style={{ fontSize:11, color:diff>0?"#9b72cf":"#e07a40", marginLeft:4 }}>{diff>0?"+":""}{fmtEur(diff)}</span>}
+                            </div>}
+                            {!d.paid&&!isFutureMonth&&<span style={{ fontSize:11, background:"#5c2d1a44", color:"#e07a40", borderRadius:4, padding:"1px 5px", marginTop:3, display:"inline-block" }}>Niet betaald</span>}
+                          </div>
+                          <div style={{ textAlign:"right", fontSize:12, color:"#7a8fa6" }}>{fmtEur(d.expected)}</div>
+                          <div style={{ textAlign:"right", fontSize:13, fontWeight:700, color:d.paid?"#52b788":"#4a6080" }}>{d.paid?fmtEur(d.amount):"—"}{d.multiPay&&<span style={{fontSize:10,color:"#7a8fa6",marginLeft:4}}>(meerdere)</span>}</div>
+                          <div style={{ textAlign:"right", fontSize:12, fontWeight:700, color:d.outstanding>0?"#e07a40":"#52b788" }}>{d.outstanding>0?fmtEur(d.outstanding):"✓"}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* BACKUP */}
+        {tab==="backup"&&(
+          <div>
+            <div style={{ background:"#1a3a5c44", border:"1px solid #4a90c844", borderRadius:10, padding:"12px 14px", marginBottom:20, fontSize:13, color:"#a0c0e0", lineHeight:1.6 }}>
+              <strong style={{ color:"#c9a84c" }}>Jouw data is veilig</strong><br/>
+              Je gegevens worden opgeslagen in de browser van dit toestel. Maak regelmatig een backup zodat je nooit data verliest.
+            </div>
+
+            {/* Export */}
+            <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, padding:20, marginBottom:14 }}>
+              <div style={{ fontSize:14, fontWeight:600, color:"#c9a84c", marginBottom:6 }}>📥 Backup maken</div>
+              <div style={{ fontSize:13, color:"#7a8fa6", marginBottom:14, lineHeight:1.6 }}>
+                Download een backup-bestand van al je huurders en betalingen. Sla dit op als reservekopie of om over te zetten naar een ander toestel.
+              </div>
+              <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:10 }}>
+                <div style={{ background:"#0f1923", border:"1px solid #2a3a50", borderRadius:8, padding:"10px 14px", flex:1, minWidth:100 }}>
+                  <div style={{ fontSize:10, color:"#7a8fa6" }}>HUURDERS</div>
+                  <div style={{ fontSize:18, fontWeight:700, color:"#4a90c8" }}>{Object.keys(tenants).length}</div>
+                </div>
+                <div style={{ background:"#0f1923", border:"1px solid #2a3a50", borderRadius:8, padding:"10px 14px", flex:1, minWidth:100 }}>
+                  <div style={{ fontSize:10, color:"#7a8fa6" }}>BETALINGEN</div>
+                  <div style={{ fontSize:18, fontWeight:700, color:"#52b788" }}>{payments.length}</div>
+                </div>
+              </div>
+              <button onClick={exportData} style={S.gold}>
+                <Ic n="list" s={14}/> Download backup (.json)
+              </button>
+              <button onClick={fixPaymentAmounts} style={{...S.gold, background:"linear-gradient(135deg,#e07a40,#e8a840)", marginTop:8}}>
+                🔧 Herstel foutieve betalingsbedragen
+              </button>
+            </div>
+
+            {/* Import */}
+            <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, padding:20 }}>
+              <div style={{ fontSize:14, fontWeight:600, color:"#c9a84c", marginBottom:6 }}>📤 Backup terugzetten</div>
+              <div style={{ fontSize:13, color:"#7a8fa6", marginBottom:14, lineHeight:1.6 }}>
+                Laad een eerder gemaakt backup-bestand in. Dit overschrijft alle huidige data — gebruik dit enkel als je data kwijt bent of wil overzetten.
+              </div>
+              <div style={{ background:"#5c2d1a33", border:"1px solid #e07a4044", borderRadius:8, padding:"10px 12px", marginBottom:14, fontSize:12, color:"#e07a40" }}>
+                ⚠️ Let op: de huidige data wordt overschreven door de backup.
+              </div>
+              <label style={{ ...S.gold, display:"inline-flex", cursor:"pointer" }}>
+                <Ic n="plus" s={14}/> Backup-bestand kiezen
+                <input type="file" accept=".json" onChange={importData} style={{ display:"none" }}/>
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* MODALS */}
+      {modal&&(
+        <div style={{ position:"fixed", inset:0, background:"#000000cc", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:14 }} onClick={e=>e.target===e.currentTarget&&setModal(null)}>
+          <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:14, padding:22, width:"100%", maxWidth:420, maxHeight:"90vh", overflowY:"auto" }}>
+
+            {modal.type==="tenant"&&(
+              <>
+                <h3 style={{ margin:"0 0 16px", fontSize:16, color:"#c9a84c" }}>{tenants[modal.unitId]?"Huurder bewerken":"Huurder toevoegen"}</h3>
+                <div style={{ marginBottom:10 }}>
+                  <label style={S.label}>Naam huurder</label>
+                  <input style={S.input} placeholder="Voornaam Achternaam" value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                  <div>
+                    <label style={S.label}>Huur (€/mnd)</label>
+                    <input style={S.input} type="number" placeholder="850" value={form.rent||""} onChange={e=>setForm(f=>({...f,rent:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label style={S.label}>Voorschot alg. kosten (€)</label>
+                    <input style={S.input} type="number" placeholder="0" value={form.voorschot||""} onChange={e=>setForm(f=>({...f,voorschot:e.target.value}))}/>
+                  </div>
+                </div>
+                {(form.rent||form.voorschot)&&(
+                  <div style={{ background:"#0f1923", border:"1px solid #c9a84c33", borderRadius:8, padding:"8px 12px", marginBottom:14, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <div style={{ fontSize:11, color:"#7a8fa6" }}>Totaal per maand</div>
+                    <div style={{ fontSize:15, fontWeight:700, color:"#c9a84c" }}>{fmtEur((Number(form.rent)||0)+(Number(form.voorschot)||0))}</div>
+                  </div>
+                )}
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={saveTenant} style={S.gold}>Opslaan</button>
+                  <button onClick={()=>setModal(null)} style={S.cancel}>Annuleren</button>
+                </div>
+              </>
+            )}
+
+            {modal.type==="history"&&(
+              <>
+                <h3 style={{ margin:"0 0 6px", fontSize:16, color:"#c9a84c" }}>Historiek bewerken</h3>
+                <div style={{ fontSize:12, color:"#7a8fa6", marginBottom:16 }}>
+                  Pas de huurgegevens aan voor deze historiek-entry. De huidige huurprijs wordt automatisch bijgewerkt naar de meest recente entry.
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                  <div>
+                    <label style={S.label}>Huur (€)</label>
+                    <input style={S.input} type="number" step="0.01" value={form.rent||""} onChange={e=>setForm(f=>({...f,rent:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label style={S.label}>Voorschot (€)</label>
+                    <input style={S.input} type="number" step="0.01" value={form.voorschot||""} onChange={e=>setForm(f=>({...f,voorschot:e.target.value}))}/>
+                  </div>
+                </div>
+                {(form.rent||form.voorschot)&&(
+                  <div style={{ background:"#0f1923", border:"1px solid #c9a84c33", borderRadius:8, padding:"8px 12px", marginBottom:10, display:"flex", justifyContent:"space-between" }}>
+                    <span style={{ fontSize:11, color:"#7a8fa6" }}>Totaal</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:"#c9a84c" }}>{fmtEur((Number(form.rent)||0)+(Number(form.voorschot)||0))}</span>
+                  </div>
+                )}
+                <div style={{ marginBottom:10 }}>
+                  <label style={S.label}>Datum</label>
+                  <input style={S.input} type="text" placeholder="bv. 01/01/2025" value={form.date||""} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
+                </div>
+                <div style={{ marginBottom:16 }}>
+                  <label style={S.label}>Notitie</label>
+                  <input style={S.input} placeholder="bv. Indexatie 2025" value={form.note||""} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={saveHistory} style={S.gold}>Opslaan</button>
+                  <button onClick={()=>setModal(null)} style={S.cancel}>Annuleren</button>
+                </div>
+              </>
+            )}
+
+            {modal.type==="payment"&&(
+              <>
+                <h3 style={{ margin:"0 0 16px", fontSize:16, color:"#c9a84c" }}>{modal.editing ? "Betaling bewerken" : "Betaling registreren"}</h3>
+                <div style={{ marginBottom:10 }}>
+                  <label style={S.label}>Eenheid</label>
+                  <select style={{...S.input, opacity: modal.editing?0.7:1}} disabled={modal.editing} value={form.unitId||""} onChange={e=>{const uid=e.target.value,t=tenants[uid];setForm(f=>({...f,unitId:uid,rent:t?.rent||"",voorschot:t?(t.voorschot||0):""}));}}>
+                    <option value="">Kies eenheid...</option>
+                    {BUILDINGS.map(b=>(
+                      <optgroup key={b.id} label={b.name}>
+                        {UNITS.filter(u=>u.buildingId===b.id).map(u=>(
+                          <option key={u.id} value={u.id}>{u.name}{tenants[u.id]?` – ${tenants[u.id].name}`:" (leeg)"}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:10 }}>
+                  <div>
+                    <label style={S.label}>Huur (€)</label>
+                    <input style={S.input} type="number" placeholder="850" value={form.rent||""} onChange={e=>setForm(f=>({...f,rent:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label style={S.label}>Voorschot alg. kosten (€)</label>
+                    <input style={S.input} type="number" placeholder="0" value={form.voorschot||""} onChange={e=>setForm(f=>({...f,voorschot:e.target.value}))}/>
+                  </div>
+                </div>
+                {(form.rent||form.voorschot)&&(
+                  <div style={{ background:"#0f1923", border:"1px solid #52b78833", borderRadius:8, padding:"8px 12px", marginBottom:10, display:"flex", justifyContent:"space-between" }}>
+                    <span style={{ fontSize:11, color:"#7a8fa6" }}>Totaal</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:"#52b788" }}>{fmtEur((Number(form.rent)||0)+(Number(form.voorschot)||0))}</span>
+                  </div>
+                )}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:10 }}>
+                  <div>
+                    <label style={S.label}>Maand</label>
+                    <select style={S.input} value={form.month} onChange={e=>setForm(f=>({...f,month:Number(e.target.value)}))}>
+                      {MONTHS_NL.map((m,i)=><option key={i} value={i}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={S.label}>Jaar</label>
+                    <select style={S.input} value={form.year} onChange={e=>setForm(f=>({...f,year:Number(e.target.value)}))}>
+                      {[2021,2022,2023,2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginBottom:10 }}>
+                  <label style={S.label}>Datum ontvangen</label>
+                  <input style={S.input} type="date" value={form.date||""} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
+                </div>
+                <div style={{ marginBottom:16 }}>
+                  <label style={S.label}>Notitie (optioneel)</label>
+                  <input style={S.input} placeholder="bv. contant betaald" value={form.note||""} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={savePayment} style={S.gold}>Opslaan</button>
+                  <button onClick={()=>setModal(null)} style={S.cancel}>Annuleren</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<HuurApp/>);
+</script>
+</body>
+</html>
