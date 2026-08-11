@@ -959,9 +959,9 @@ function HuurApp() {
               return `<tr style="border-bottom:1px solid #eee;${d.paid&&diff<0?'background:#fff8f0':''}">
                 <td style="padding:7px 10px;font-weight:600">${mn}</td>
                 <td style="padding:5px 8px"><span style="background:${statusBg};color:white;padding:3px 8px;border-radius:4px;font-size:12px">${statusTxt}</span></td>
-                <td style="padding:7px 10px;text-align:right;color:#555">€ ${d.expRent.toFixed(2).replace('.',',')}</td>
-                <td style="padding:7px 10px;text-align:right;color:#555">${d.expVoor>0?'€ '+d.expVoor.toFixed(2).replace('.',','):'—'}</td>
                 <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1a3a5c">€ ${d.expected.toFixed(2).replace('.',',')}</td>
+                <td style="padding:7px 10px;text-align:right;color:#1a5c9c">${d.paid?'€ '+d.rent.toFixed(2).replace('.',','):'—'}</td>
+                <td style="padding:7px 10px;text-align:right;color:#6a3a9c">${d.paid&&d.voorschot>0?'€ '+d.voorschot.toFixed(2).replace('.',','):'—'}</td>
                 <td style="padding:7px 10px;text-align:right;color:#2d6a4f;font-weight:700">${d.paid?'€ '+d.amount.toFixed(2).replace('.',',')+multiPayInfo:future?'—':'—'}</td>
                 <td style="padding:7px 10px;color:#888;font-size:12px">${dateInfo}</td>
                 <td style="padding:7px 10px;text-align:center">${diffStr||'✓'}</td>
@@ -980,7 +980,7 @@ function HuurApp() {
               <div class="box"><div class="lbl">Openstaand</div><div class="val" style="color:${outstanding>0?'#c0392b':'#2d6a4f'}">€ ${outstanding.toFixed(2).replace('.',',')}</div></div>
               ${overpaid>0?`<div class="box"><div class="lbl">Te veel betaald</div><div class="val" style="color:#8e44ad">€ ${overpaid.toFixed(2).replace('.',',')}</div></div>`:''}
             </div>
-            <table><thead><tr><th>Maand</th><th>Status</th><th>Huur verschuldigd</th><th>Voorschot</th><th>Totaal verwacht</th><th>Betaald</th><th>Datum</th><th>Verschil</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody>
+            <table><thead><tr><th>Maand</th><th>Status</th><th>Verwacht</th><th>Huur betaald</th><th>Voorschot betaald</th><th>Totaal betaald</th><th>Datum</th><th>Verschil</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody>
             <tfoot><tr style="background:#f5f5f5;font-weight:700"><td colspan="4" style="padding:8px 10px">TOTAAL</td><td style="padding:8px 10px;text-align:right">€ ${totalExpected.toFixed(2).replace('.',',')}</td><td style="padding:8px 10px;text-align:right;color:#2d6a4f">€ ${totalReceived.toFixed(2).replace('.',',')}</td><td style="padding:8px 10px;text-align:center;color:${outstanding>0?'#c0392b':'#2d6a4f'}">${outstanding>0?'-€ '+outstanding.toFixed(2).replace('.',','):overpaid>0?'+€ '+overpaid.toFixed(2).replace('.',','):'✓'}</td><td></td></tr></tfoot>
             </table>
             <p style="margin-top:16px;font-size:10px;color:#aaa">Gegenereerd op ${new Date().toLocaleDateString('nl-BE')} via Huurportaal</p>
@@ -1234,8 +1234,8 @@ function HuurApp() {
                       {overpaid>0&&<div style={{ background:"#9b72cf22", border:"1px solid #9b72cf44", borderRadius:8, padding:"8px 12px", marginBottom:12, fontSize:13, color:"#9b72cf" }}>💜 Te veel betaald: <strong>{fmtEur(overpaid)}</strong></div>}
                       {/* Monthly rows */}
                       <div style={{ background:"#1a2940", border:"1px solid #2a3a50", borderRadius:12, overflow:"hidden" }}>
-                        <div style={{ display:"grid", gridTemplateColumns:"100px 1fr 100px 100px 80px", padding:"8px 14px", borderBottom:"1px solid #2a3a50", fontSize:10, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em" }}>
-                          <div>Maand</div><div>Status</div><div style={{textAlign:"right"}}>Verwacht</div><div style={{textAlign:"right"}}>Betaald</div><div style={{textAlign:"right"}}>Saldo</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"100px 1fr 90px 90px 90px 80px", padding:"8px 14px", borderBottom:"1px solid #2a3a50", fontSize:10, color:"#7a8fa6", textTransform:"uppercase", letterSpacing:"0.07em" }}>
+                          <div>Maand</div><div>Status</div><div style={{textAlign:"right"}}>Verwacht</div><div style={{textAlign:"right",color:"#4a90c8"}}>Huur</div><div style={{textAlign:"right",color:"#9b72cf"}}>Voorschot</div><div style={{textAlign:"right"}}>Saldo</div>
                         </div>
                         {monthData.map((d,i)=>{
                           const future = isMonthFuture(d.month, d.year);
@@ -1243,7 +1243,7 @@ function HuurApp() {
                           const runningBalance = monthData.slice(0,i+1).filter(x=>!isMonthFuture(x.month,x.year)).reduce((s,x)=>s+(x.paid?x.amount:0)-(isMonthFuture(x.month,x.year)?0:x.expected),0);
                           const mnLabel = rapportMode==="periode" ? MONTHS_NL[d.month]+" "+d.year : MONTHS_NL[d.month];
                           return (
-                            <div key={i} style={{ display:"grid", gridTemplateColumns:"100px 1fr 100px 100px 80px", alignItems:"center", padding:"10px 14px", borderBottom:i<monthData.length-1?"1px solid #141f2e":"none", background:d.paid?"#2d6a4f18":future?"transparent":"#5c2d1a18" }}>
+                            <div key={i} style={{ display:"grid", gridTemplateColumns:"100px 1fr 90px 90px 90px 80px", alignItems:"center", padding:"10px 14px", borderBottom:i<monthData.length-1?"1px solid #141f2e":"none", background:d.paid?"#2d6a4f18":future?"transparent":"#5c2d1a18" }}>
                               <div style={{ fontSize:13, fontWeight:600, color:future?"#4a6080":d.paid?"#52b788":"#e07a40" }}>{mnLabel}</div>
                               <div>
                                 {future ? <span style={{ fontSize:11, color:"#4a6080", fontStyle:"italic" }}>Toekomstig</span>
@@ -1263,7 +1263,8 @@ function HuurApp() {
                                 : <span style={{ fontSize:11, background:"#5c2d1a44", color:"#e07a40", borderRadius:4, padding:"2px 6px" }}>Niet betaald</span>}
                               </div>
                               <div style={{ textAlign:"right", fontSize:12, color:"#7a8fa6" }}>{fmtEur(d.expected)}</div>
-                              <div style={{ textAlign:"right", fontSize:13, fontWeight:700, color:d.paid?"#52b788":"#4a6080" }}>{d.paid?fmtEur(d.amount):"—"}</div>
+                              <div style={{ textAlign:"right", fontSize:12, fontWeight:600, color:d.paid?"#4a90c8":"#4a6080" }}>{d.paid?fmtEur(d.rent):"—"}</div>
+                              <div style={{ textAlign:"right", fontSize:12, fontWeight:600, color:d.paid&&d.voorschot>0?"#9b72cf":"#4a6080" }}>{d.paid&&d.voorschot>0?fmtEur(d.voorschot):"—"}</div>
                               <div style={{ textAlign:"right", fontSize:12, fontWeight:600, color:runningBalance<0?"#e07a40":runningBalance>0?"#9b72cf":"#52b788" }}>{runningBalance===0?"✓":fmtEur(runningBalance)}</div>
                             </div>
                           );
